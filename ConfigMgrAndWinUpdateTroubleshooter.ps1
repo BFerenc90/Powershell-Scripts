@@ -119,6 +119,11 @@ if($missingActions){
 $installedComponents = (Get-WmiObject -Namespace "root\ccm" -Class "CCM_InstalledComponent").Count
 Write-Host "Count of the installed components: $installedComponents"
 
+# Checking the Software Center Path
+$existsSWCenter = Test-Path "C:\Windows\CCM\ClientUX\SCClient.exe"
+if($existsSWCenter){Write-Host "Software Center path check: OK" -ForegroundColor Green}
+else{Write-Host "Softare Center could not find" -ForegroundColor Red}
+
 # Checking ccmsqlce Log File
 $logFile = "$logdir\CcmSQLCE.log"
 $logLevel = (Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\CCM\Logging\@Global').logLevel
