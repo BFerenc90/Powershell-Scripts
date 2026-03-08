@@ -15,8 +15,15 @@ $sms = new-object -comobject 'Microsoft.SMS.Client'
 $siteCode = $sms.GetAssignedSite()
 Write-Host "Site Code: $siteCode"
 
-$configMgrGUID = Get-CimInstance -Namespace root\ccm -ClassName CCM_Client | Select-Object -ExpandProperty ClientId
-Write-Host "$configMgrGUID"
+# CCM Client
+$ccmClient = Get-WmiObject -Namespace "root\ccm" -Class "CCM_Client" | select *
+$clientID = $ccmClient.ClientID
+$previousGUID = $ccmClient.PreviousClientId
+$GUIDChangeDate = $ccmClient.ClientIdChangeDate
+
+Write-Host "ClientID: $clientID"
+Write-Host "Previous clientID: $previousGUID"
+Write-Host "Last clientID change date: $GUIDChangeDate"
 
 # Client Version
 try {
@@ -46,7 +53,7 @@ $logdir = (Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\CCM\Logging\@Global'
 $ccmDirectory = $logdir.replace("\Logs", "")
 Write-Host "ConfigMgr Client Directory: $ccmDirectory"
 
-# last update informations
+# Last Update Informations
 $Session = New-Object -ComObject Microsoft.Update.Session
 $Searcher = $Session.CreateUpdateSearcher()
 $HistoryCount = $Searcher.GetTotalHistoryCount()
@@ -61,12 +68,58 @@ foreach($update in $lastUpdate){
     $counter = $counter + 1
 }
 
-# checking the count of the SDF files (local database files) in the directory 
+# Checking the Count of the SDF Files (Local Database Files) in the Directory 
 $files = @(Get-ChildItem "$ccmDirectory\*.sdf" -ErrorAction SilentlyContinue)
 if ($files.Count -lt 7) { Write-Host "ConfigMgr Client database is corrupt (SDF local database files). ConfigMgr Client reinstallation is needed." -ForegroundColor Red }
 else { Write-Host "SDF files test: OK" -ForegroundColor Green }
 
-# checking ccmsqlce log file
+# Checking the Actions (13)
+$neededTriggers = @{
+"{00000000-0000-0000-0000-000000000021}" = "Machine policy retrieval & evaluation cycle"
+"{00000000-0000-0000-0000-000000000022}" = "Machine policy evaluation cycle"
+"{00000000-0000-0000-0000-000000000001}" = "Hardware inventory cycle"
+"{00000000-0000-0000-0000-000000000002}" = "Software inventory cycle"
+"{00000000-0000-0000-0000-000000000003}" = "Discovery data collection cycle"
+"{00000000-0000-0000-0000-000000000113}" = "Software updates scan cycle"
+"{00000000-0000-0000-0000-000000000114}" = "Software updates deployment evaluation cycle"
+"{00000000-0000-0000-0000-000000000031}" = "Software metering usage report cycle"
+"{00000000-0000-0000-0000-000000000121}" = "Application deployment evaluation cycle"
+"{00000000-0000-0000-0000-000000000026}" = "User policy retrieval"
+"{00000000-0000-0000-0000-000000000027}" = "User policy evaluation cycle"
+"{00000000-0000-0000-0000-000000000032}" = "Windows installer source list update cycle"
+"{00000000-0000-0000-0000-000000000010}" = "File collection"
+}
+
+$triggers = Get-WmiObject -Namespace "root\ccm\scheduler" -Class "CCM_Scheduler_History" | select ScheduleID, LastTriggerTime
+
+$result = foreach ($id in $neededTriggers.Keys) {
+
+    $match = $triggers | Where-Object { $_.ScheduleID -eq $id }
+
+    [PSCustomObject]@{
+        ScheduleID      = $id
+        ActionName      = $neededTriggers[$id]
+        Exists          = [bool]$match
+        LastTriggerTime = $match.LastTriggerTime
+    }
+}
+
+$actionCount = ($result | Where-Object {$_.Exists }).Count
+$missingActions = $result | Where-Object { -not $_.Exists } | select ActionName
+
+if($missingActions){
+    foreach($missingAction in $missingActions){
+        $actionName = $missingAction.ActionName
+        Write-Host "Missing actions in the Scheduler namespace: $actionName" -ForegroundColor Red 
+    }
+    Write-Host "ConfigMgr client reinstallation is needed" -ForegroundColor Red
+} else{Write-Host "Scheduler namespace / Actions check: OK" -ForegroundColor Green}
+
+# Count of the Installed Components
+$installedComponents = (Get-WmiObject -Namespace "root\ccm" -Class "CCM_InstalledComponent").Count
+Write-Host "Count of the installed components: $installedComponents"
+
+# Checking ccmsqlce Log File
 $logFile = "$logdir\CcmSQLCE.log"
 $logLevel = (Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\CCM\Logging\@Global').logLevel
 if ( (Test-Path -Path $logFile) -and ($logLevel -ne 0) ) {
@@ -83,7 +136,7 @@ if ( (Test-Path -Path $logFile) -and ($logLevel -ne 0) ) {
         }
 else { Write-Host "CcmSQLCE.log check passed" -ForegroundColor Green }
 
-# checking certificate
+# Checking Certificate
 $logFile1 = "$logdir\ClientIDManagerStartup.log"
 $error1 = 'Failed to find the certificate in the store'
 $error2 = '[RegTask] - Server rejected registration 3'
@@ -100,7 +153,7 @@ if ($content -match $error2) {
 
  if ($ok -eq $true) {Write-Host 'ConfigMgr Client Certificate: OK' -ForegroundColor Green}
 
- # BITS check
+ # BITS Check
 $Errors = Get-BitsTransfer -AllUsers | Where-Object { ($_.JobState -like "TransientError") -or ($_.JobState -like "Transient_Error") -or ($_.JobState -like "Error") }
 if ($Errors) {Write-Host "Errors in the BITS transfers" -ForegroundColor Red}
 else {Write-Host "BITS transfer: OK" -ForegroundColor Green}
@@ -124,13 +177,13 @@ if(($null -ne $status) -and $status.RebootPending){ Write-Host "Pending reboot r
                                                     $pendingReboot = $true}
  if ($pendingReboot -eq $false) {Write-Host 'Pending reboot: OK' -ForegroundColor Green}
 
- # check Provisioning Mode
+ # Check Provisioning Mode
  $registryPath = 'HKLM:\SOFTWARE\Microsoft\CCM\CcmExec'
  $provisioningMode = (Get-ItemProperty -Path $registryPath).ProvisioningMode
  if ($provisioningMode -eq 'true') { Write-Host "The ConfigMgr is in the provisioning mode" -ForegroundColor Red }
  else { Write-Host "Provisioning mode: OK" -ForegroundColor Green }
 
- # Free space
+ # Free Space
 $driveC = Get-WmiObject -Class Win32_LogicalDisk | Where-Object {$_.DeviceID -eq "C:"} | Select-Object FreeSpace, Size
 $freeSpace = $driveC.FreeSpace / 1024 / 1024 /1024
 $freeSpaceRounded = ([math]::Round($freeSpace,2))
@@ -163,14 +216,13 @@ catch {
 if ($dnscheck.HostName -like $fqdn) {
             foreach ($dnsIP in $dnsAddressList) {
                 #Write-Host "Testing if IP address: $dnsIP published in DNS exist in local IP configuration."
-                ##if ($dnsIP -notin $localIPs) { ## Requires PowerShell 3. Works fine :(
                 if ($localIPs -notcontains $dnsIP) {
                    Write-Host "IP '$dnsIP' in DNS record do not exist locally" -ForegroundColor Red
                 } else {Write-Host "DNS check: OK" -ForegroundColor Green}
             }
 }
 
-# checking %USERPROFILE%\AppData\Roaming value
+# Checking %USERPROFILE%\AppData\Roaming value
 New-PSDrive -PSProvider Registry -Name HKU -Root HKEY_USERS -ErrorAction SilentlyContinue | Out-Null
 $correctValue = '%USERPROFILE%\AppData\Roaming'
 $currentValue = (Get-Item 'HKU:\S-1-5-18\Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders\').GetValue('AppData', $null, 'DoNotExpandEnvironmentNames')
@@ -181,7 +233,6 @@ else{Write-Host 'User Shell Folders check: OK' -ForegroundColor Green}
 if (Get-Service -Name ccmexec -ErrorAction SilentlyContinue) {
       Write-Host "Configuration Manager Client installation: OK" -ForegroundColor Green
 
-            # Reinstall if we are unable to start the CM client
       if ($CCMService.Status -eq "Stopped") {
               Write-Host "The SMS Agent Host service is not running" -ForegroundColor Red
                   if ($CCMService.StartType -ne "Automatic") {
@@ -192,7 +243,7 @@ if (Get-Service -Name ccmexec -ErrorAction SilentlyContinue) {
    }
 else{Write-Host "The ConfigMgr is not installed properly. It has to be reinstalled" -ForegroundColor Red}
 
-# connect to SMS_Client WMI class
+# Connect to SMS_Client WMI Class
  Try {$WMI = Get-WmiObject -Namespace root/ccm -Class SMS_Client -ErrorAction Stop 
       Write-Host "WMI connection to root/ccm namespace: OK" -ForegroundColor Green
       } 
@@ -200,36 +251,31 @@ else{Write-Host "The ConfigMgr is not installed properly. It has to be reinstall
  # Clearing WMI
  #Get-WmiObject -Query "Select * from __Namespace WHERE Name='CCM'" -Namespace root | Remove-WmiObject
 
-# other WMI check
+# Other WMI Check
 $result = winmgmt /verifyrepository
 switch -wildcard ($result) {
             "*inconsistent*" { Write-Host "The WMI repository is inconsistent" -ForegroundColor Red } 
             "*not consistent*"  { Write-Host "The WMI repository is inconsistent" -ForegroundColor Red }
             "*WMI repository is consistent*"  { Write-Host "WMI repository consistent: OK" -ForegroundColor Green }
 }
-
 Try {$WMI = Get-WmiObject Win32_ComputerSystem -ErrorAction Stop} 
 Catch {Write-Host "Failed to connect to WMI class Win32_ComputerSystem. WMI corrupted" -ForegroundColor Red}
 
 
-# triggering the update actions - updatestore.log
+# Triggering the Update Actions - updatestore.log
 Try {$SCCMUpdatesStore = New-Object -ComObject Microsoft.CCM.UpdatesStore -ErrorAction Stop
      $SCCMUpdatesStore.RefreshServerComplianceState()
-     Write-Host "Triggering the Windows Update cycles: OK" -ForegroundColor Green
-      } 
+     Write-Host "Triggering the Windows Update cycles: OK" -ForegroundColor Green} 
 Catch {Write-Host "The Windows Update cycles couldn't be triggered" -ForegroundColor Red}
  
-# checking the communication to the MP
+# Checking the Communication to the MP in the Log file
 $logfile = "$logdir\StateMessage.log"
 $StateMessage = Get-Content($logfile)
-if ($StateMessage -match 'Successfully forwarded State Messages to the MP') {
-            Write-Host "Forwarding messages to the MP: OK" -ForegroundColor Green
-        }
+if ($StateMessage -match 'Successfully forwarded State Messages to the MP') {Write-Host "Forwarding messages to the MP: OK" -ForegroundColor Green}
 else {Write-Host "Based on the StateMessage.log there could be an issue with the communication to the MP" -ForegroundColor Red }
 
+# DNS Check to the MP
 $MP = Get-WmiObject -Namespace root\ccm -Class SMS_Authority | select -ExpandProperty CurrentManagementPoint
-
-# DNS test to the MP
 try {
     $dns = Resolve-DnsName $MP -ErrorAction Stop
     Write-Host "DNS lookup to the Manamenet Poin ($MP): OK" -ForegroundColor Green
@@ -237,7 +283,7 @@ try {
 catch {
     Write-Host "DNS lookup FAILED to MP ($MP)" -ForegroundColor Red}
 
-# Port test to the MP
+# Port Check to the MP
 try {
         $tcp = New-Object System.Net.Sockets.TcpClient
         $tcp.Connect($MP,80)
@@ -248,7 +294,7 @@ catch {
         Write-Host "Port 80 FAILED to the Management Point" -ForegroundColor Red
     }
 
-# MP cert endpoint
+# MP Cert Endpoint
 $url1 = "http://$MP/SMS_MP/.sms_aut?mpcert"
 try {
     $r = Invoke-WebRequest -Uri $url1 -UseBasicParsing -TimeoutSec 10
@@ -260,7 +306,7 @@ catch {
     Write-Host "Request to the MPCERT endpoint FAILED" -ForegroundColor Red
 }
 
-# MP list endpoint
+# MP List Endpoint
 $url2 = "http://$MP/SMS_MP/.sms_aut?mplist"
 try {
     $r = Invoke-WebRequest -Uri $url2 -UseBasicParsing -TimeoutSec 10
@@ -275,7 +321,7 @@ catch {
 
 
 
-# checking WuaHandler.log
+# Checking WuaHandler.log
 $logfile = "$logdir\WUAHandler.log"
 $logFileContent = Get-Content($logfile)
 if ($logFileContent -match '0x80004005' -or $logFileContent -match '0x87d00692') {
@@ -283,7 +329,7 @@ if ($logFileContent -match '0x80004005' -or $logFileContent -match '0x87d00692')
         }
             Write-Verbose "Check machine registry file to see if it's older than $($Days) days."
 
-# checking registry.pol file
+# Checking registry.pol File
 $MachineRegistryFile = "$($env:WinDir)\System32\GroupPolicy\Machine\registry.pol"
 $file = Get-ChildItem -Path $MachineRegistryFile -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty LastWriteTime
 $regPolDate = Get-Date($file)
@@ -291,7 +337,7 @@ $now = Get-Date
 if (($now - $regPolDate).Days -ge 0) {Write-Host "Machine registry.pol file is older than 1 day" -ForegroundColor Red}
 else{Write-Host "Machine registry.pol file age: OK" -ForegroundColor Green}          
 
-# orphaned cache folders
+# Orphaned Cache Folders
 $CCMCache = (New-Object -ComObject "UIResource.UIResourceMgr").GetCacheInfo().Location
 if ($null -eq $CCMCache) { $CCMCache = "$env:SystemDrive\Windows\ccmcache" }
 $ValidCachedFolders = (New-Object -ComObject "UIResource.UIResourceMgr").GetCacheInfo().GetCacheElements() | ForEach-Object {$_.Location}
@@ -305,7 +351,7 @@ ForEach ($CachedFolder in $AllCachedFolders) {
                 }
             }
 
-# checking services
+# Checking Services
 $services = @("BITS", "winmgmt", "wuauserv", "lanmanserver", "RpcSs", "W32Time", "ccmexec")
 foreach ($service in $services) {
 
@@ -325,7 +371,7 @@ foreach ($service in $services) {
     else{Write-Host "$serviceName service is running" -ForegroundColor Green}
 }
 
-# checking admin share and C: share
+# Checking Admin Share and C: Share
 $share = Get-WmiObject Win32_Share | Where-Object {$_.Name -like 'ADMIN$'}
 if ($share.Name -contains 'ADMIN$') {Write-Host "Share for C:\Windows: OK" -ForegroundColor Green}
 else { Write-Host "Issue with the share C:\Windows" -ForegroundColor Red}
@@ -333,7 +379,7 @@ $share = Get-WmiObject Win32_Share | Where-Object {$_.Name -like 'C$'}
 if ($share.Name -contains "C$") {Write-Host "Share for C root: OK" -ForegroundColor Green}
 else { Write-Host "Issue with the share C:\" -ForegroundColor Red }
 
-# start client health evaluation task
+# Start Client Health Evaluation Task
 $RegistryKey = "HKLM:\Software\ConfigMgrClientHealth"
 $registryValueName = "RefreshServerComplianceState"
 try{[datetime]$LastRun = Get-RegistryValue -Path $RegistryKey -Name $registryValueName}
@@ -345,7 +391,7 @@ Try {
       } 
 Catch {Write-Host "The Client Health Evaluation couldn't be triggered" -ForegroundColor Red}
 
-# checking hardware inventory scan
+# Checking Hardware Inventory Scan
 $wmi = Get-WmiObject -Namespace root\ccm\invagt -Class InventoryActionStatus | Where-Object {$_.InventoryActionID -eq '{00000000-0000-0000-0000-000000000001}'} | Select-Object @{label='HWSCAN';expression={$_.ConvertToDateTime($_.LastCycleStartedDate)}} 
 $HWScanDate = $wmi | Select-Object -ExpandProperty HWSCAN
 $minDate = (Get-Date).AddHours(-6)
@@ -360,7 +406,7 @@ else {Write-Host "There was no Hardware Inventory sync in the last 6 hours" -For
       Catch {Write-Host "Hardware Inventory cycle couldn't be triggered" -ForegroundColor Red}
 }
 
-# check if Domain Admins in the local admins group
+# Check if Domain Admins in the Local Admins Group
 $group = "Domain Admins"
 $admins = Get-LocalGroupMember -Group "Administrators" | select -ExpandProperty Name
 if ($admins -match "Domain Admins") {
@@ -484,4 +530,3 @@ Restart-Service 'wuauserv'
 ([wmiclass]'ROOT\ccm:SMS_Client').TriggerSchedule('{00000000-0000-0000-0000-000000000108}')
 
 }
-
