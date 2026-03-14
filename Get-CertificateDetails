@@ -1,0 +1,5 @@
+$cerStore = New-Object System.Security.Cryptography.X509Certificates.X509Store My, LocalMachine -ErrorAction 'Stop'
+$cerStore.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadOnly)
+$keyword = "Digi"
+$Result = $cerStore.Certificates | Where-Object { $_.DnsNameList -like "$keyword*" }  | Select-Object SerialNumber,Thumbprint,Subject,Issuer,NotBefore,NotAfter
+$cerStore.Close()
