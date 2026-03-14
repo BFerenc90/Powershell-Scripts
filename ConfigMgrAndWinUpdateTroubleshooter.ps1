@@ -1,3 +1,5 @@
+Write-Host "############# Basic Informations #############" -ForegroundColor Cyan
+
 # Domain
 $domain = (Get-WmiObject Win32_ComputerSystem).Domain
 Write-Host "Domain: $domain"
@@ -33,8 +35,23 @@ try {
 Write-Host "Client Version: $clientVersion"
 
 # Client Cache in ConfigMgr Client
-$clientCacheSize = (New-Object -ComObject UIResource.UIResourceMgr).GetCacheInfo().TotalSize
-Write-Host "Client Cache Size: $clientCacheSize"
+$clientCacheSize = (New-Object -ComObject UIResource.UIResourceMgr).GetCacheInfo().TotalSize / 1024
+Write-Host "Client Cache Size: $clientCacheSize GB"
+
+# Folder count in ccmcache and size of the ccmcache
+$path = "C:\Windows\ccmcache"
+if (Test-Path $path) {
+    $folders = Get-ChildItem -Path $path -Directory
+    $count = $folders.Count
+    Write-Host "Folder count in ccmcache: $count"
+
+    $size = (Get-ChildItem -Path $path -Recurse -File | Measure-Object -Property Length -Sum).Sum
+    $sizeGB = [math]::Round($size / 1GB, 2)
+    Write-Host "ccmcache current size: $sizeGB GB"
+
+} else {
+    Write-Host "The ccmcache folder doesn't exist" -ForegroundColor Red
+}
 
 # Client Max Log Size
 $logMaxSize = [Math]::Round(((Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\CCM\Logging\@Global').LogMaxSize) / 1000)
@@ -68,6 +85,9 @@ foreach($update in $lastUpdate){
     $counter = $counter + 1
 }
 
+Write-Host "############# Checking #############" -ForegroundColor Cyan
+
+
 # Checking the Count of the SDF Files (Local Database Files) in the Directory 
 $files = @(Get-ChildItem "$ccmDirectory\*.sdf" -ErrorAction SilentlyContinue)
 if ($files.Count -lt 7) { Write-Host "ConfigMgr Client database is corrupt (SDF local database files). ConfigMgr Client reinstallation is needed." -ForegroundColor Red }
@@ -78,7 +98,6 @@ $neededTriggers = @{
 "{00000000-0000-0000-0000-000000000021}" = "Machine policy retrieval & evaluation cycle"
 "{00000000-0000-0000-0000-000000000022}" = "Machine policy evaluation cycle"
 "{00000000-0000-0000-0000-000000000001}" = "Hardware inventory cycle"
-"{00000000-0000-0000-0000-000000000002}" = "Software inventory cycle"
 "{00000000-0000-0000-0000-000000000003}" = "Discovery data collection cycle"
 "{00000000-0000-0000-0000-000000000113}" = "Software updates scan cycle"
 "{00000000-0000-0000-0000-000000000114}" = "Software updates deployment evaluation cycle"
@@ -87,10 +106,10 @@ $neededTriggers = @{
 "{00000000-0000-0000-0000-000000000026}" = "User policy retrieval"
 "{00000000-0000-0000-0000-000000000027}" = "User policy evaluation cycle"
 "{00000000-0000-0000-0000-000000000032}" = "Windows installer source list update cycle"
-"{00000000-0000-0000-0000-000000000010}" = "File collection"
 }
 
 $triggers = Get-WmiObject -Namespace "root\ccm\scheduler" -Class "CCM_Scheduler_History" | select ScheduleID, LastTriggerTime
+$SMSClient = Get-WMIObject -Namespace "root\ccm" -Class SMS_Client -list
 
 $result = foreach ($id in $neededTriggers.Keys) {
 
@@ -102,6 +121,15 @@ $result = foreach ($id in $neededTriggers.Keys) {
         Exists          = [bool]$match
         LastTriggerTime = $match.LastTriggerTime
     }
+
+    try{
+        $SMSClient.TriggerSchedule($id) | Out-Null
+    
+    }
+    
+    catch{
+    $actionName = $neededTriggers[$id]
+    Write-Host "$actionName couldn't be triggered" -ForegroundColor Red}
 }
 
 $actionCount = ($result | Where-Object {$_.Exists }).Count
@@ -117,7 +145,8 @@ if($missingActions){
 
 # Count of the Installed Components
 $installedComponents = (Get-WmiObject -Namespace "root\ccm" -Class "CCM_InstalledComponent").Count
-Write-Host "Count of the installed components: $installedComponents"
+if($installedComponents -eq 18){Write-Host "Count of the installed components: $installedComponents" -ForegroundColor Green}
+else{Write-Host "Count of the installed components should be 18 but it's $installedComponents" -ForegroundColor Red}
 
 # Checking the Software Center Path
 $existsSWCenter = Test-Path "C:\Windows\CCM\ClientUX\SCClient.exe"
@@ -134,12 +163,19 @@ if ( (Test-Path -Path $logFile) -and ($logLevel -ne 0) ) {
             $FileCreated = Get-Date($CreationTime)
 
             $now = Get-Date
-            if ( (($now - $FileDate).Days -lt 7) -and ((($now - $FileCreated).Days) -gt 7) ) {
-                Write-Host "CM client not in debug mode and CcmSQLCE.log exists. Reinstalling ConfigMgr Client is needed" -ForegroundColor Red              
+            if ( ($now - $FileDate).Days -eq 0) {
+                Write-Host "The CcmSQLCE.log exists and it was updated today." -ForegroundColor Green              
                 }
-            else { Write-Host "CcmSQLCE.log has not been updated for two days" -ForegroundColor Yellow }
+            else { Write-Host "CcmSQLCE.log has not been updated today yet" -ForegroundColor Yellow }
         }
-else { Write-Host "CcmSQLCE.log check passed" -ForegroundColor Green }
+else { Write-Host "CcmSQLCE.log doesn't exist" -ForegroundColor Red }
+
+Write-Host "Checking the errors in the CcmSQLCE.log file:"
+Select-String -Path "C:\Windows\CCM\Logs\CcmSQLCE.log" -Pattern "error","fail","corrupt","locked","timeout" |
+ForEach-Object {
+    ($_ -replace '.*<!\[LOG\[','' -replace '\]LOG\].*','')
+}
+
 
 # Checking Certificate
 $logFile1 = "$logdir\ClientIDManagerStartup.log"
@@ -385,16 +421,28 @@ if ($share.Name -contains "C$") {Write-Host "Share for C root: OK" -ForegroundCo
 else { Write-Host "Issue with the share C:\" -ForegroundColor Red }
 
 # Start Client Health Evaluation Task
-$RegistryKey = "HKLM:\Software\ConfigMgrClientHealth"
-$registryValueName = "RefreshServerComplianceState"
-try{[datetime]$LastRun = Get-RegistryValue -Path $RegistryKey -Name $registryValueName}
+try{[datetime]$LastRun = (Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\CCM\CcmEval").LastEvalTime}
     catch{$LastRun=[datetime]::MinValue}
-    Write-Host "Client Health Evaluation RefreshServerComplianceState date: $($LastRun)"
-Try {
+    Write-Host "Client Health Evaluation LastEvalTime: $($LastRun)"
+if (Select-String -Path "C:\Windows\CCM\Logs\CcmEval.log" -Pattern "failed" -Quiet) { 
+    Write-Host "The Client Health maybe UNHEALTHY. The following errors are in the CcmEval.log:" -ForegroundColor Yellow 
+        Select-String -Path "C:\Windows\CCM\Logs\CcmEval.log" -Pattern "failed" |
+        ForEach-Object {
+            ($_ -replace '.*<!\[LOG\[','' -replace '\]LOG\].*','')
+        }
+    } 
+    
+    else { "Client Health: HEALTHY" }
+
+$input = Read-Host "Do you want to execute the Client Health Evaluation process? (yes or no)"
+if($input -eq "yes" -or $input -eq "y"){
+    Try {
      Start-ScheduledTask -TaskName "Configuration Manager Health Evaluation" -TaskPath "\Microsoft\Configuration Manager\" -ErrorAction Stop
-     Write-Host "Client Health Evaluation Triggered: OK" -ForegroundColor Green
+     Write-Host "Client Health Evaluation triggered: OK" -ForegroundColor Green
       } 
-Catch {Write-Host "The Client Health Evaluation couldn't be triggered" -ForegroundColor Red}
+    Catch {Write-Host "The Client Health Evaluation couldn't be triggered" -ForegroundColor Red}
+
+}
 
 # Checking Hardware Inventory Scan
 $wmi = Get-WmiObject -Namespace root\ccm\invagt -Class InventoryActionStatus | Where-Object {$_.InventoryActionID -eq '{00000000-0000-0000-0000-000000000001}'} | Select-Object @{label='HWSCAN';expression={$_.ConvertToDateTime($_.LastCycleStartedDate)}} 
