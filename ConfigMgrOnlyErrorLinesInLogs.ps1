@@ -1,36 +1,52 @@
-$logPath = "C:\Windows\CCM\Logs"
+$logPath    = "C:\Windows\CCM\Logs"
 $outputFile = "C:\Temp\CCM_Log_Errors.txt"
 
-# these logs will be skipped
-$excludeLogs = "CoManagementHandler","SensorManagedProvider","mtrmgr"
+# check these logs
+$includedLogs = @(
+    "ClientIDManagerStartup.log",
+    "ClientLocation.log",
+    "LocationServices.log",
+    "PolicyAgent.log",
+    "CcmMessaging.log",
+    "CcmEval.log",
+    "CcmExec.log",
+    "ExecMgr.log",
+    "InventoryAgent.log",
+    "WUAHandler.log",
+    "UpdatesDeployment.log",
+    "UpdatesHandler.log",
+    "UpdatesStore.log",
+    "ScanAgent.log",
+    "CAS.log",
+    "ContentTransferManager.log",
+    "DataTransferService.log"
+)
 
-# keywords for searching in the logs
-$regexError = '(?i)(error|failed|failure|fatal|exception|0x[0-9a-f]+)'
+# regex for error searching
+$regexError = '(?i)\b(error|failed|failure|fatal|exception|0x[0-9a-f]{4,8})\b'
 
-$results = @()
+$results = New-Object System.Collections.Generic.HashSet[string]
 
-Get-ChildItem $logPath -Filter *.log | Where-Object {
-    $name = $_.Name
-    -not ($excludeLogs | Where-Object { $name -like "*$_*" })
-} | ForEach-Object {
+Get-ChildItem -Path $logPath -Filter *.log |
+Where-Object { $includedLogs -contains $_.Name } |
+ForEach-Object {
 
     $logName = $_.Name
 
-    Get-Content $_.FullName | ForEach-Object {
+    Get-Content -Path $_.FullName -ErrorAction SilentlyContinue |
+    ForEach-Object {
 
         if ($_ -match '<!\[LOG\[(.*?)\]LOG\]!>') {
 
             $logMessage = $matches[1]
 
             if ($logMessage -match $regexError) {
-
-                $results += "$logName : $logMessage"
+                $results.Add("$logName : $logMessage") | Out-Null
             }
         }
     }
 }
 
-# remove the duplications
 $results |
-Sort-Object -Unique |
-Set-Content $outputFile
+Sort-Object |
+Set-Content -Path $outputFile -Encoding UTF8
