@@ -537,15 +537,18 @@ else{Write-Host 'Domain Admins is not member of the local admins group' -Foregro
 $input = Read-Host "Do you want to execute extended Windows Update troubleshooting? (yes or no)"
 if($input -eq "yes" -or $input -eq "y"){
 
+# Windows Update related services
 Write-Host "1. Stopping Windows Update Services..." 
 Stop-Service -Name BITS 
 Stop-Service -Name wuauserv 
 Stop-Service -Name appidsvc 
 Stop-Service -Name cryptsvc 
- 
+
+# BITS download queue clearing
 Write-Host "2. Remove QMGR Data file..." 
 Remove-Item "$env:allusersprofile\Application Data\Microsoft\Network\Downloader\qmgr*.dat" -ErrorAction SilentlyContinue 
- 
+
+# Deleteng the Windows Update és BITS related folders
 Write-Host "3. Renaming the Software Distribution and CatRoot Folder..." 
 Remove-Item $env:systemroot\SoftwareDistribution -ErrorAction SilentlyContinue -recurse
 Remove-Item $env:systemroot\System32\Catroot2 -ErrorAction SilentlyContinue -recurse
@@ -554,13 +557,14 @@ rename-item "C:\ProgramData\application data\Microsoft\Network\Downloader" downl
 
 Write-Host "4. Removing old Windows Update log..." 
 Remove-Item $env:systemroot\WindowsUpdate.log -ErrorAction SilentlyContinue 
- 
+
+# It sets the default permissions for the Windows Update and BITS services (it is useful if there's any Access Denied issue during the update)
 Write-Host "5. Resetting the Windows Update Services to defualt settings..." 
 sc.exe sdset bits "D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWLOCRRC;;;AU)(A;;CCLCSWRPWPDTLOCRRC;;;PU)" 
 sc.exe sdset wuauserv "D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWLOCRRC;;;AU)(A;;CCLCSWRPWPDTLOCRRC;;;PU)" 
- 
+
+# Reregister all the Windows Update related dll files
 Set-Location $env:systemroot\system32 
- 
 Write-Host "6. Registering some DLLs..." 
 regsvr32.exe /s atl.dll 
 regsvr32.exe /s urlmon.dll 
@@ -598,56 +602,49 @@ regsvr32.exe /s qmgrprxy.dll
 regsvr32.exe /s wucltux.dll 
 regsvr32.exe /s muweb.dll 
 regsvr32.exe /s wuwebv.dll 
- 
 
+# Reset the Windows Network API setting to the default. It can be useful if you don't even use proxy!
 Write-Host "7) Resetting the WinSock..." 
 netsh winsock reset 
 netsh winhttp reset proxy 
- 
+
+# Deleting all BITS jobs which have errors during the download
 Write-Host "8) Delete all BITS jobs..." 
-import-module bitstransfer
+Import-Module Bitstransfer
 Get-BitsTransfer -AllUsers | Where-Object { $_.JobState -like 'TransientError' } | Remove-BitsTransfer
-Set-Item -Path WSMan:\localhost\Client\TrustedHosts -Value '*' -force
 Get-BitsTransfer -AllUsers | Where-Object { $_.JobState -like 'SUSPENDED' } | Resume-BitsTransfer
+
 Write-Host "9) Reset branchcache..." 
 netsh branchcache reset 
-netsh branchcache set service mode=DISTRIBUTED
-Write-Host "10) Execute gpupdate /force..." 
-gpupdate.exe /Force
+
 Write-Host "11) Starting Windows Update Services..." 
 Start-Service -Name BITS 
 Start-Service -Name wuauserv 
 Start-Service -Name appidsvc 
 Start-Service -Name cryptsvc 
 
-Write-Host "12) Forcing discovery..." 
+Write-Host "10) Execute gpupdate /force..." 
+gpupdate.exe /Force
+
+# Delete Windows Update client ID and reregister itself against the WSUS and report all installed and missing updates to the server
+Write-Host "12) Forcing discovery..."
 wuauclt.exe /ResetAuthorization /DetectNow
 wuauclt /reportnow
 
+# Triggering the following actions: Machine Policy Retrieval & Evaluation, Software Updates Scan, Software Updates Deployment Evaluation, Software Updates Assignment Evaluation
 ([wmiclass]'ROOT\ccm:SMS_Client').TriggerSchedule('{00000000-0000-0000-0000-000000000021}')
 ([wmiclass]'ROOT\ccm:SMS_Client').TriggerSchedule('{00000000-0000-0000-0000-000000000108}')
 ([wmiclass]'ROOT\ccm:SMS_Client').TriggerSchedule('{00000000-0000-0000-0000-000000000024}')
 ([wmiclass]'ROOT\ccm:SMS_Client').TriggerSchedule('{00000000-0000-0000-0000-000000000023}')
-(New-Object -ComObject Microsoft.CCM.UpdatesStore).RefreshServerComplianceState()
-    
-Write-Host "13) Removing Software Update Lock..."
-$query = "select * from CCM_PrePostActions"; gwmi -Namespace ROOT\ccm\Policy\Machine\RequestedConfig -Query $query | rwmi; gwmi -Namespace ROOT\ccm\Policy\Machine\ActualConfig -Query $query | rwmi
-
-Write-Host "14) Executing Built-in Windows Update Troubleshooter..."
-Get-TroubleshootingPack -Path "C:\Windows\diagnostics\system\WindowsUpdate" | Invoke-TroubleshootingPack -Unattended
-Restart-Service 'wuauserv'
-	#location refresh
-([wmiclass]'ROOT\ccm:SMS_Client').TriggerSchedule('{00000000-0000-0000-0000-000000000012}')
-([wmiclass]'ROOT\ccm:SMS_Client').TriggerSchedule('{00000000-0000-0000-0000-000000000024}')
-([wmiclass]'ROOT\ccm:SMS_Client').TriggerSchedule('{00000000-0000-0000-0000-000000000023}')
-
-	#MP Refreash
-([wmiclass]'ROOT\ccm:SMS_Client').TriggerSchedule('{00000000-0000-0000-0000-000000000021}')
-([wmiclass]'ROOT\ccm:SMS_Client').TriggerSchedule('{00000000-0000-0000-0000-000000000022}')
 ([wmiclass]'ROOT\ccm:SMS_Client').TriggerSchedule('{00000000-0000-0000-0000-000000000042}')
-
 ([wmiclass]'ROOT\ccm:SMS_Client').TriggerSchedule('{00000000-0000-0000-0000-000000000113}')
 ([wmiclass]'ROOT\ccm:SMS_Client').TriggerSchedule('{00000000-0000-0000-0000-000000000108}')
+# Refresh the clients state, reevaluate the compliance
+(New-Object -ComObject Microsoft.CCM.UpdatesStore).RefreshServerComplianceState()
+    
+Write-Host "13) Executing Built-in Windows Update Troubleshooter..."
+Get-TroubleshootingPack -Path "C:\Windows\diagnostics\system\WindowsUpdate" | Invoke-TroubleshootingPack -Unattended
 
+Restart-Service 'wuauserv'
 }
 
