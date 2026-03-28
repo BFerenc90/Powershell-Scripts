@@ -546,7 +546,7 @@ if ($admins -match "Domain Admins") {
     Write-Log -Message "Local Admin Group for Domain Admins Check" -Level "OK" -LogFile $logFile}
 else{Write-Log -Message "Domain Admins is not member of the local admins group" -Level "ERROR" -LogFile $logFile}
 
-Add-Content -Path $logFile -Value "`n############# Error Lines in Logs #############`n"
+Add-Content -Path $logFile -Value "`n############# ConfigMgr Cleint Log Analysis #############`n"
 
 $logPath    = "C:\Windows\CCM\Logs"
 
@@ -648,3 +648,62 @@ try {
 catch {
     Write-Log -Message "Query the CCM_UpdateStatus WMI Class failed" -Level "ERROR" -LogFile $logFile
 }
+
+
+Add-Content -Path $logFile -Value "`n############# CBS Log Analysis #############`n"
+
+$cbsLogPath = "$env:windir\Logs\CBS\CBS.log"
+
+if (Test-Path $cbsLogPath) {
+    $cbsAge = (Get-Date) - (Get-Item $cbsLogPath).LastWriteTime
+    Write-Log -Message "CBS.log found, last modified $([int]$cbsAge.TotalHours) hour(s) ago" -Level "INFO" -LogFile $logFile
+
+    $cbsPatterns = @(
+        "error",
+        "failed",
+        "corrupt",
+        "cannot repair",
+        "repair failed",
+        "missing file",
+        "store corruption",
+        "0x800f",
+        "0x8007",
+        "0x8024",
+        "rollback",
+        "reboot required",
+        "mark store corruption flag",
+        "exec: processing complete"
+    )
+
+    $cbsLines = Get-Content -Path $cbsLogPath -Tail 8000 -ErrorAction SilentlyContinue
+    $cbsHits = $cbsLines | Where-Object {
+        $line = $_.ToLower()
+        $match = $false
+        foreach ($pattern in $cbsPatterns) {
+            if ($line.Contains($pattern.ToLower())) {
+                $match = $true
+                Add-Content -Path $logFile -Value $line
+            }
+        }
+     }
+}
+
+
+Add-Content -Path $logFile -Value "`n############# DISM Log Analysis #############`n"
+
+$dismLogPath = "$env:windir\Logs\DISM\dism.log"
+
+if (Test-Path $dismLogPath) {
+    $dismHits = Get-Content -Path $dismLogPath -Tail 8000 -ErrorAction SilentlyContinue |
+        Where-Object { $_ -match '(?i)\b(0x[0-9a-f]{4,8})\b' } |
+        Select-Object -Unique
+
+    if ($dismHits) {
+        Write-Log -Message "DISM.log contains suspicious entries" -Level "WARNING" -LogFile $logFile
+        foreach ($line in $dismHits) {
+            Add-Content -Path $logFile -Value ("  - " + $line + " | " + $resolved)
+            }
+
+            
+        }
+    }
