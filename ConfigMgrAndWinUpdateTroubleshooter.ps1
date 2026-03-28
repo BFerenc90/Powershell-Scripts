@@ -548,12 +548,12 @@ Stop-Service -Name cryptsvc
 Write-Host "2. Remove QMGR Data file..." 
 Remove-Item "$env:allusersprofile\Application Data\Microsoft\Network\Downloader\qmgr*.dat" -ErrorAction SilentlyContinue 
 
-# Deleteng the Windows Update és BITS related folders
-Write-Host "3. Renaming the Software Distribution and CatRoot Folder..." 
-Remove-Item $env:systemroot\SoftwareDistribution -ErrorAction SilentlyContinue -recurse
-Remove-Item $env:systemroot\System32\Catroot2 -ErrorAction SilentlyContinue -recurse
-Remove-item "C:\ProgramData\application data\Microsoft\Network\Downloader.old" -ErrorAction SilentlyContinue
-rename-item "C:\ProgramData\application data\Microsoft\Network\Downloader" downloader.old
+# Renaming the Windows Update és BITS related folders
+Write-Host "3. Renaming the Software Distribution and CatRoot Folder..."
+$dateToday = Get-Date -Format "yyyyMMdd_HHmmss"
+Rename-Item $env:systemroot\SoftwareDistribution "SoftwareDistribution_$dateToday" -ErrorAction SilentlyContinue
+Rename-Item $env:systemroot\System32\catroot2 "catroot2_$dateToday" -ErrorAction SilentlyContinue
+Rename-Item "C:\ProgramData\application data\Microsoft\Network\Downloader" "Downloader__$dateToday" -ErrorAction SilentlyContinue
 
 Write-Host "4. Removing old Windows Update log..." 
 Remove-Item $env:systemroot\WindowsUpdate.log -ErrorAction SilentlyContinue 
@@ -615,13 +615,23 @@ Get-BitsTransfer -AllUsers | Where-Object { $_.JobState -like 'TransientError' }
 Get-BitsTransfer -AllUsers | Where-Object { $_.JobState -like 'SUSPENDED' } | Resume-BitsTransfer
 
 Write-Host "9) Reset branchcache..." 
-netsh branchcache reset 
+netsh branchcache reset
+
+# The DO cache folder could be other location!
+Write-Host "10) Resetting Delivery Optimization..."
+Stop-Service DoSvc -Force -ErrorAction SilentlyContinue
+Remove-Item "C:\ProgramData\Microsoft\Windows\DeliveryOptimization\Cache\*" -Recurse -Force -ErrorAction SilentlyContinue
+Start-Service DoSvc -ErrorAction SilentlyContinue
 
 Write-Host "11) Starting Windows Update Services..." 
 Start-Service -Name BITS 
 Start-Service -Name wuauserv 
 Start-Service -Name appidsvc 
-Start-Service -Name cryptsvc 
+Start-Service -Name cryptsvc
+
+Set-Service BITS -StartupType Automatic
+Set-Service wuauserv -StartupType Automatic
+Set-Service cryptsvc -StartupType Automatic
 
 Write-Host "10) Execute gpupdate /force..." 
 gpupdate.exe /Force
@@ -629,7 +639,10 @@ gpupdate.exe /Force
 # Delete Windows Update client ID and reregister itself against the WSUS and report all installed and missing updates to the server
 Write-Host "12) Forcing discovery..."
 wuauclt.exe /ResetAuthorization /DetectNow
-wuauclt /reportnow
+wuauclt.exe /reportnow
+UsoClient StartScan
+UsoClient StartDownload
+UsoClient StartInstall    
 
 # Triggering the following actions: Machine Policy Retrieval & Evaluation, Software Updates Scan, Software Updates Deployment Evaluation, Software Updates Assignment Evaluation
 ([wmiclass]'ROOT\ccm:SMS_Client').TriggerSchedule('{00000000-0000-0000-0000-000000000021}')
@@ -644,7 +657,20 @@ wuauclt /reportnow
     
 Write-Host "13) Executing Built-in Windows Update Troubleshooter..."
 Get-TroubleshootingPack -Path "C:\Windows\diagnostics\system\WindowsUpdate" | Invoke-TroubleshootingPack -Unattended
-
 Restart-Service 'wuauserv'
+
+Write-Host "14) Generating Windows Update log..."
+Get-WindowsUpdateLog
+
+# Execute SFC and DISM commands
+Write-Host "15) Running system file check..."
+sfc /scannow
+DISM /Online /Cleanup-Image /RestoreHealth
+
+Write-Host "16) Checking pending reboot..."
+if (Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending") {
+    Write-Host "Reboot is pending!" -ForegroundColor Yellow
+}
+
 }
 
