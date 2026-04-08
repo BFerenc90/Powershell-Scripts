@@ -562,8 +562,7 @@ $result = foreach ($id in $neededTriggers.Keys) {
     catch{
     $actionName = $neededTriggers[$id]
     $success = $false
-    Add-HtmlErrorFinding -Title "Action Trigger Check" -Recommendation "Not all of the actions could be triggered in the ConfigMgr. Wait 5 minutes and try to trigger the actions manually.<br> If it fails: the ConfigMgr Client has to be reinstalled."
-    
+     
     }
 
     
@@ -572,6 +571,9 @@ $result = foreach ($id in $neededTriggers.Keys) {
 
 if ($success) {
     Add-HtmlOkFinding -Title "Action Trigger Check"}
+else{
+    Add-HtmlErrorFinding -Title "Action Trigger Check" -Recommendation "Not all of the actions could be triggered in the ConfigMgr. Wait 5 minutes and try to trigger the actions manually.<br> If it fails: the ConfigMgr Client has to be reinstalled."
+    }
 
 # Checking missing actions
 $checksNumber += 1
