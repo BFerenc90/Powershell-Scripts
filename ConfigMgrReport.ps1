@@ -626,24 +626,31 @@ if ( (Test-Path -Path $logFileCcmSQLCE) -and ($logLevel -ne 0) ) {
             else {
                 Add-HtmlWarningFinding -Title "CcmSQLCE.log Update Time Check" -Recommendation "CcmSQLCE.log has no update today.<br> Recommendation: trigger all of the actions in the ConfigMgr, wait 10 minutes and check again. If the log file date doesn't change the ConfigMgr client should be reinstalled."
             }
+
+                    # CcmSQLCE.log content check
+        $checksNumber += 1
+        $CcmSQLCEErrors = Select-String -Path $logFileCcmSQLCE -Pattern "error","fail","corrupt","locked","timeout"
+        $ccmSQLCEHTMLString = ""
+        if($CcmSQLCEErrors){
+            foreach($CcmSQLCEError in $CcmSQLCEErrors) {
+                $errorLine = $CcmSQLCEError -replace '.*<!\[LOG\[','' -replace '\]LOG\].*',''
+                $ccmSQLCEHTMLString += "$errorLine <br>"
+            }
+            Add-HtmlWarningFinding -Title "CcmSQLCE.log Content Check" -Recommendation "Errors: <br>$ccmSQLCEHTMLString<br><br>Recommendation: search for the error code if there's any"
+        } else{
+            Add-HtmlOkFinding -Title "CcmSQLCE.log Content Check"
         }
+
+        }
+
+
+
+
 else {
     Add-HtmlErrorFinding -Title "CcmSQLCE.log Update Time Check" -Recommendation "The CcmSQLCE.log doesn't exist it can mean that the ConfigMgr client isn't working properly and has to be reinstalled."
  }
 
-# CcmSQLCE.log content check
-$checksNumber += 1
-$CcmSQLCEErrors = Select-String -Path $logFileCcmSQLCE -Pattern "error","fail","corrupt","locked","timeout"
-$ccmSQLCEHTMLString = ""
-if($CcmSQLCEErrors){
-    foreach($CcmSQLCEError in $CcmSQLCEErrors) {
-        $errorLine = $CcmSQLCEError -replace '.*<!\[LOG\[','' -replace '\]LOG\].*',''
-        $ccmSQLCEHTMLString += "$errorLine <br>"
-    }
-    Add-HtmlWarningFinding -Title "CcmSQLCE.log Content Check" -Recommendation "Errors: <br>$ccmSQLCEHTMLString<br><br>Recommendation: search for the error code if there's any"
-} else{
-    Add-HtmlOkFinding -Title "CcmSQLCE.log Content Check"
-}
+
 
 # Checking Certificate
 $checksNumber += 1
