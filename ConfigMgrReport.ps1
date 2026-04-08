@@ -358,7 +358,7 @@ $cpuInfo = $cpu.Name
 
 $mbProduct = $mb.Product
 $mbManufacturer = $mb.Manufacturer
-$mbInfo = "$mbProduct (Manufacturer: $mbManufacturer"
+$mbInfo = "$mbProduct (Manufacturer: $mbManufacturer)"
 
 $bios = Get-CimInstance Win32_BIOS
 $serialNumber = $bios.SerialNumber
@@ -572,19 +572,21 @@ $result = foreach ($id in $neededTriggers.Keys) {
 if ($success) {
     Add-HtmlOkFinding -Title "Action Trigger Check"}
 else{
-    Add-HtmlErrorFinding -Title "Action Trigger Check" -Recommendation "Not all of the actions could be triggered in the ConfigMgr. Wait 5 minutes and try to trigger the actions manually.<br> If it fails: the ConfigMgr Client has to be reinstalled."
+    Add-HtmlErrorFinding -Title "Action Trigger Check" -Recommendation "Not all of the actions could be triggered in the ConfigMgr. Reastart the PC, wait 5 minutes and try to trigger the actions manually.<br> If it fails: the ConfigMgr Client has to be reinstalled."
     }
 
 # Checking missing actions
 $checksNumber += 1
 $actionCount = ($result | Where-Object {$_.Exists }).Count
 $missingActions = $result | Where-Object { -not $_.Exists } | select ActionName
+$missingActionNamesForHTML = ""
 
 if($missingActions){
     foreach($missingAction in $missingActions){
         $actionName = $missingAction.ActionName
+        $missingActionNamesForHTML += "$actionName <br>"
     }
-    Add-HtmlErrorFinding -Title "Missing Actions Check" -Recommendation "Missing actions in the Scheduler namespace: $actionName <br> The ConfigMgr Client has to be reinstalled."
+    Add-HtmlErrorFinding -Title "Missing Actions Check" -Recommendation "Missing actions in the Scheduler namespace:<br> $missingActionNamesForHTML <br><br> The ConfigMgr Client has to be reinstalled."
 } else{Add-HtmlOkFinding -Title "Missing Actions Check"}
 
 
@@ -685,13 +687,20 @@ else {
 
 # Checking Client Settings
 $checksNumber += 1
-$ClientSettingsConfig = @(Get-WmiObject -Namespace "root\ccm\Policy\DefaultMachine\RequestedConfig" -Class CCM_ClientAgentConfig -ErrorAction SilentlyContinue | Where-Object {$_.PolicySource -eq "CcmTaskSequence"})
-if ($ClientSettingsConfig.Count -gt 0) {
+try{
+    Get-WmiObject -Namespace "root\ccm\Policy\DefaultMachine\RequestedConfig" -Class CCM_ClientAgentConfig -ErrorAction Stop
+    $ClientSettingsConfig = @(Get-WmiObject -Namespace "root\ccm\Policy\DefaultMachine\RequestedConfig" -Class CCM_ClientAgentConfig -ErrorAction SilentlyContinue | Where-Object {$_.PolicySource -eq "CcmTaskSequence"})
+    if ($ClientSettingsConfig.Count -gt 0) {
+        Add-HtmlErrorFinding "Client Settings Configuration Check" -Recommendation "The ConfigMgr Client has to be reinstalled."
+    }
+    else {
+        Add-HtmlOkFinding "Client Settings Configuration Check"
+    }
+}
+catch{
     Add-HtmlErrorFinding "Client Settings Configuration Check" -Recommendation "The ConfigMgr Client has to be reinstalled."
 }
-else {
-    Add-HtmlOkFinding "Client Settings Configuration Check"
-}
+
 
 # Checking Pending Reboot
 $checksNumber += 1
@@ -841,13 +850,18 @@ Catch {
  
 # Checking the Communication to the MP in the Log file
 $checksNumber += 1
-$logfileStateMessage = "$logDirectory\StateMessage.log"
-$StateMessage = Get-Content($logfileStateMessage)
-if ($StateMessage -match 'Successfully forwarded State Messages to the MP') {
-        Add-HtmlOkFinding -Title "Forwarding Messages to the MP Based on StateMessage.log Check"
+$logfileStateMessage = "C:\Windows\CCM\Logs\StateMessage.log"
+if (Test-Path $logfileStateMessage) {
+    $StateMessage = Get-Content($logfileStateMessage)
+    if ($StateMessage -match 'Successfully forwarded State Messages to the MP') {
+            Add-HtmlOkFinding -Title "Forwarding Messages to the MP Based on StateMessage.log Check"
+    }
+    else {
+            Add-HtmlWarningFinding -Title "Forwarding Messages to the MP Based on StateMessage.log Check" -Recommendation "Based on the StateMessage.log there could be an issue with the communication to the MP.<br>Check the network and friewall related settings."
+    }
 }
-else {
-        Add-HtmlWarningFinding -Title "Forwarding Messages to the MP Based on StateMessage.log Check" -Recommendation "Based on the StateMessage.log there could be an issue with the communication to the MP.<br>Check the network and friewall related settings."
+else{
+    Add-HtmlErrorFinding -Title "Forwarding Messages to the MP Based on StateMessage.log Check" -Recommendation "The StateMessage.log can not be found. Maybe the ConfigMgr Client is not installed."
 }
 
 
@@ -1125,5 +1139,4 @@ $htmlContent += @"
 $outputPath = ".\services_report.html"
 $htmlContent | Out-File -FilePath $outputPath -Encoding UTF8
 
-# Open the HTML file in the default web browser (optional)
 Start-Process $outputPath
