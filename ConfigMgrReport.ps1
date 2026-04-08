@@ -103,7 +103,7 @@ body {
     linear-gradient(180deg, #0a1022 0%, #0b1020 100%);
   color: var(--text);
 }
-.wrapper { max-width: 1320px; margin: 0 auto; padding: 28px; }
+.wrapper { max-width: 1600px; margin: 0 auto; padding: 28px; }
 .hero {
   background: linear-gradient(135deg, rgba(109,124,255,.22), rgba(255,255,255,.04));
   border: 1px solid var(--line);
@@ -111,7 +111,6 @@ body {
   padding: 28px;
   box-shadow: var(--shadow);
   display: grid;
-  grid-template-columns: 1.35fr .9fr;
   gap: 24px;
 }
 .hero h1 { margin: 0 0 10px; font-size: 34px; letter-spacing: .2px; }
@@ -129,8 +128,8 @@ body {
   padding: 18px;
   backdrop-filter: blur(6px);
 }
-.kpi .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .12em; }
-.kpi .value { margin-top: 8px; font-size: 28px; font-weight: 700; }
+.kpi .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .12em; white-space: nowrap;}
+.kpi .value { margin-top: 8px; font-size: 28px; font-weight: 700; white-space: nowrap;}
 .kpi .sub { margin-top: 4px; color: var(--muted); font-size: 13px; }
 .scorecard {
   background: linear-gradient(180deg, rgba(255,255,255,.07), rgba(255,255,255,.04));
@@ -364,20 +363,36 @@ $bios = Get-CimInstance Win32_BIOS
 $serialNumber = $bios.SerialNumber
 
 
+# Network Informations
+$networkInfoHTML = ""
+
+Get-NetIPConfiguration | ForEach-Object {
+    $adapter = Get-NetAdapter -InterfaceIndex $_.InterfaceIndex
+    $adapterName = $_.InterfaceAlias
+    $adaptermac = $adapter.MacAddress
+    $adapterip = $_.IPv4Address.IPAddress
+    $adaptergateway = $_.IPv4DefaultGateway.NextHop
+    $dhcpEnabled = $_.IPv4Address.PrefixOrigin -eq "Dhcp"
+
+    $networkInfoHTML += "$adapterName &nbsp;&nbsp;&nbsp;&nbsp; $adaptermac &nbsp;&nbsp;&nbsp;&nbsp; $adapterip &nbsp;&nbsp;&nbsp;&nbsp; $adaptergateway &nbsp;&nbsp;&nbsp;&nbsp; DHCP: $dhcpEnabled<br>"
+}
+
+
 $htmlContent += @"
 <div class="wrapper">
   <section class="hero">
     <div>
-      <h1>ConfigMgr Health Report</h1>
+      <h1>ConfigMgr Troubleshooting Report</h1>
       <div class="subtitle">
         Visual status report for the $hostname client machine.<br>
         The report highlights the overall ConfigMgr Client health of the device and try to help you with the recommended troubleshooting steps.
       </div>
       <div class="kpi-grid">
-        <div class="kpi"><div class="label">Hostname</div><div class="value">$hostname</div><div class="sub">$domain</div></div>
-        <div class="kpi"><div class="label">Site Code</div><div class="value">$siteCode</div><div class="sub">$adSite</div></div>
+        <div class="kpi"><div class="label">Hostname</div><div class="value" style="font-size:22px">$hostname</div><div class="sub">$domain</div></div>
+        <div class="kpi"><div class="label">Site Code</div><div class="value" style="font-size:22px">$siteCode</div></div>
+        <div class="kpi"><div class="label">AD Site</div><div class="value" style="font-size:22px">$adSite</div></div>
         <div class="kpi"><div class="label">Client version</div><div class="value" style="font-size:22px">$clientVersion</div></div>
-        <div class="kpi"><div class="label">Cache</div><div class="value">$sizeGB GB / $clientCacheSize GB</div></div>
+        <div class="kpi"><div class="label">Cache</div><div class="value" style="font-size:22px">$sizeGB GB / $clientCacheSize GB</div></div>
         </div>
     </div>
 
@@ -394,16 +409,16 @@ $htmlContent += @"
         <tr><td>Client ID</td><td><code>$clientID</code></td></tr>
         <tr><td>Previous Client ID</td><td><code>$previousGUID</code></td></tr>
         <tr><td>Last Client ID Change</td><td>$GUIDChangeDate</td></tr>
-        <tr><td>Log Directory</td><td><code>$logDirectory</code></td></tr>
-        <tr><td>CCM Client Directory</td><td><code>$ccmDirectory</code></td></tr>
-        <tr><td>Maximum Log Size</td><td><code>$logMaxSize</code></td></tr>
-        <tr><td>Maximum Log History</td><td><code>$logMaxHistory</code></td></tr>
-        <tr><td>Cache Size</td><td><code>$clientCacheSize</code></td></tr>
-        <tr><td>Cache Current Size</td><td><code>$sizeGB GB</code></td></tr>
-        <tr><td>Folder Count in CCMCache</td><td><code>$folderCount</code></td></tr>
-        <tr><td>Last Client Health Evaluation</td><td><code>$lastClientHealthRun</code></td></tr>
-        <tr><td>Operating System</td><td><code>$osName</code></td></tr>
-        <tr><td>Operating System Version</td><td><code>$osVersion</code></td></tr>
+        <tr><td>Log Directory</td><td>$logDirectory</td></tr>
+        <tr><td>CCM Client Directory</td><td>$ccmDirectory</td></tr>
+        <tr><td>Maximum Log Size</td><td>$logMaxSize</td></tr>
+        <tr><td>Maximum Log History</td><td>$logMaxHistory</td></tr>
+        <tr><td>Cache Size</td><td>$clientCacheSize</td></tr>
+        <tr><td>Cache Current Size</td><td>$sizeGB GB</td></tr>
+        <tr><td>Folder Count in CCMCache</td><td>$folderCount</td></tr>
+        <tr><td>Last Client Health Evaluation</td><td>$lastClientHealthRun</td></tr>
+        <tr><td>Operating System</td><td>$osName</td></tr>
+        <tr><td>Operating System Version</td><td>$osVersion</td></tr>
 
       </table>
     </section>
@@ -418,6 +433,8 @@ $htmlContent += @"
         <tr><td>Motherboard</td><td>$mbInfo</td></tr>
         <tr><td>Serialnumber</td><td>$serialNumber</td></tr>
       </table>
+      <h2 style="margin-top:20px;">Network Informations</h2>
+      <div class="section small" style="margin-bottom:10px;">$networkInfoHTML</div>
     </section>
 
     
@@ -688,7 +705,7 @@ else {
 # Checking Client Settings
 $checksNumber += 1
 try{
-    Get-WmiObject -Namespace "root\ccm\Policy\DefaultMachine\RequestedConfig" -Class CCM_ClientAgentConfig -ErrorAction Stop
+    $clientConfig = Get-WmiObject -Namespace "root\ccm\Policy\DefaultMachine\RequestedConfig" -Class CCM_ClientAgentConfig -ErrorAction Stop
     $ClientSettingsConfig = @(Get-WmiObject -Namespace "root\ccm\Policy\DefaultMachine\RequestedConfig" -Class CCM_ClientAgentConfig -ErrorAction SilentlyContinue | Where-Object {$_.PolicySource -eq "CcmTaskSequence"})
     if ($ClientSettingsConfig.Count -gt 0) {
         Add-HtmlErrorFinding "Client Settings Configuration Check" -Recommendation "The ConfigMgr Client has to be reinstalled."
@@ -1046,9 +1063,10 @@ $htmlContent += @"
 
     <div class="cols-3">
       <div class="mini-card"><h3>All Checks</h3><div class="big">$checksNumber</div></div>
-      <div class="mini-card"><h3>Success</h3><div class="big">$successCount</div></div>
-      <div class="mini-card"><h3>Warning</h3><div class="big">$warningCount</div></div>
-      <div class="mini-card"><h3>Error</h3><div class="big">$errorCount</div></div>
+      
+      <div class="mini-card" style="background: rgba(29,191,115,.14); color: #86efac; border-color: rgba(29,191,115,.34);"><h3>Success</h3><div class="big">$successCount</div></div>
+      <div class="mini-card" style="background: rgba(245,183,0,.12); color: #fde68a; border-color: rgba(245,183,0,.28);"><h3>Warning</h3><div class="big">$warningCount</div></div>
+      <div class="mini-card" style="background: rgba(239,68,68,.12); color: #fca5a5; border-color: rgba(239,68,68,.28);"><h3>Error</h3><div class="big">$errorCount</div></div>
     </div>
 
 </div>
