@@ -76,7 +76,7 @@ $htmlContent = @"
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>ConfigMgr Health Report - CLIENT1</title>
+<title>ConfigMgr Troubleshooting Report</title>
 <style>
 :root {
   --bg: #0b1020;
@@ -342,16 +342,15 @@ if($missingUpdates){
 # Hardware Informations
 $disk = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='C:'"
 $cpu  = Get-CimInstance Win32_Processor
-$ram  = Get-CimInstance Win32_PhysicalMemory
 $mb   = Get-CimInstance Win32_BaseBoard
 
 $diskSize = [math]::Round($disk.Size/1GB,2)
 $freediskSize = [math]::Round($disk.FreeSpace/1GB,2)
 $diskInfo = "$freediskSize GB is free (Total size: $diskSize GB)"
 
-$totalRAM = [math]::Round(($ram.Capacity | Measure-Object -Sum).Sum /1GB,2)
-$ramModules = $ram.Count
-$ramInfo = "$totalRAM ($ramModules modules)"
+$totalRamBytes = (Get-CimInstance -ClassName Win32_ComputerSystem).TotalPhysicalMemory
+$totalRAM = [math]::Round($totalRamBytes / 1GB, 2)
+$ramInfo = "$totalRAM GB"
 
 $cpuInfo = $cpu.Name
 
@@ -413,7 +412,7 @@ $htmlContent += @"
         <tr><td>CCM Client Directory</td><td>$ccmDirectory</td></tr>
         <tr><td>Maximum Log Size</td><td>$logMaxSize</td></tr>
         <tr><td>Maximum Log History</td><td>$logMaxHistory</td></tr>
-        <tr><td>Cache Size</td><td>$clientCacheSize</td></tr>
+        <tr><td>Cache Size</td><td>$clientCacheSize GB</td></tr>
         <tr><td>Cache Current Size</td><td>$sizeGB GB</td></tr>
         <tr><td>Folder Count in CCMCache</td><td>$folderCount</td></tr>
         <tr><td>Last Client Health Evaluation</td><td>$lastClientHealthRun</td></tr>
@@ -466,6 +465,26 @@ $htmlContent += @"
 "@
 
 # Stating the checks hier
+
+# Checking ccmsetup.log file
+$checksNumber += 1
+$ccmSetupLogPath = "C:\Windows\CCMSetup\Logs\ccmsetup.log"
+$resultsForCcmSetup = ""
+
+if (Test-Path $ccmSetupLogPath) {
+
+    $lastLine = Get-Content -Path $ccmSetupLogPath -Tail 1 -ErrorAction SilentlyContinue
+
+    if ($lastLine -match 'CcmSetup is exiting with return code 0') {
+        Add-HtmlOkFinding -Title "Ccmsetup.log Check"
+    }
+    else {
+        Add-HtmlErrorFinding -Title "Ccmsetup.log Check" -Recommendation "Based on the ccmsetup.log the ConfigMgr client is not installed properly, it has to be reinstalled."
+            }
+}
+else {
+    Add-HtmlErrorFinding -Title "Ccmsetup.log Check" -Recommendation "The ccmsetup.log file doesn't exist."
+}
 
 
 # Maintanance Windows
@@ -1126,10 +1145,97 @@ ForEach-Object {
     }
 }
 
+
+# regex for error codes translation
+$regexError = '(?i)\b(0x[0-9a-f]{4,8})\b'
+
+$resultsForErrorCodesFromLogs = ""
+
+Get-ChildItem -Path "C:\Windows\CCM\Logs" -Filter *.log |
+Where-Object { $includedLogs -contains $_.Name } |
+ForEach-Object {
+
+    $logName = $_.Name
+
+    Get-Content -Path $_.FullName -ErrorAction SilentlyContinue |
+    ForEach-Object {
+
+        if ($_ -match '<!\[LOG\[(.*?)\]LOG\]!>') {
+
+            $logMessage = $matches[1]
+
+            # Összes hibakód kinyerése a sorból
+            $errorMatches = [regex]::Matches($logMessage, $regexError)
+
+            foreach ($match in $errorMatches) {
+                $errorCode = $match.Groups[1].Value
+
+                 $num = if ($code -match "^0x") { [Convert]::ToInt32($code, 16) } else { [int]"$errorCode" }
+                 $msg = (New-Object ComponentModel.Win32Exception($num)).Message
+
+                $textForAppend = "<b>$errorCode</b> : $msg <br>"
+
+                if (-not $resultsForErrorCodesFromLogs.Contains($textForAppend)) {
+                    $resultsForErrorCodesFromLogs += $textForAppend
+                }
+            }
+        }
+    }
+}
+
+
+# dism and cbs log analysis
+$regexError = '(?i)\b0x[0-9a-f]{4,8}\b'
+
+$logFiles = @(
+    "C:\Windows\Logs\DISM\dism.log",
+    "C:\Windows\Logs\CBS\CBS.log"
+)
+
+$uniqueErrors = [System.Collections.Generic.HashSet[string]]::new()
+
+$resultsForDismAndCbs = ""
+
+foreach ($logFile in $logFiles) {
+    if (Test-Path $logFile) {
+
+        $logName = Split-Path $logFile -Leaf
+
+        Get-Content -Path $logFile -ErrorAction SilentlyContinue |
+        ForEach-Object {
+
+            $errorMatches = [regex]::Matches($_, $regexError)
+
+            foreach ($match in $errorMatches) {
+                $errorCode = $match.Value.ToLower()
+
+                if ($uniqueErrors.Add("$logName|$errorCode")) {
+
+                    try {
+                        $errorNumber = [Convert]::ToInt32($errorCode, 16)
+                        $errorMessage = (New-Object ComponentModel.Win32Exception($errorNumber)).Message
+                    }
+                    catch {
+                        $errorMessage = "Unknown error code"
+                    }
+
+                    # HTML kimenet
+                    $resultsForDismAndCbs += "<b>$logName</b> : $errorCode - $errorMessage <br>"
+                }
+            }
+        }
+    }
+}
+
+
+
 $htmlContent += @"
 
 <div class="section" style="margin-bottom:10px;"$resultsFromLogs</div>
-
+<h2>Error code translation for ConfigMgr logs</h2>
+<div class="section" style="margin-bottom:10px;"$resultsForErrorCodesFromLogs</div>
+<h2>Error code translation for DISM and CBS logs</h2>
+<div class="section" style="margin-bottom:10px;"$resultsForDismAndCbs</div>
 
 "@
 
