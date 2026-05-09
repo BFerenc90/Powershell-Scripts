@@ -240,6 +240,7 @@ table {
         vertical-align: top;
         word-break: break-word;
         overflow-wrap: break-word;
+        min-width: 120px;
     }
 
     th {
@@ -346,6 +347,131 @@ foreach($trigger in $schedulerHistory){
 
     
 }
+
+
+
+# WSUS / Windows Update policy registry values
+
+$resultsWuPolicy = ""
+
+$wuPolicyPaths = @(
+    "HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate",
+    "HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU",
+    "HKLM\SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization",
+    "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\DeliveryOptimization",
+    "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\DeliveryOptimization\Config",
+    "HKLM\SOFTWARE\Microsoft\PolicyManager\current\device\DeliveryOptimization",
+    "HKLM\SOFTWARE\Microsoft\PolicyManager\default\DeliveryOptimization",
+    "HKLM\SOFTWARE\Microsoft\WindowsUpdate\UpdatePolicy\PolicyState"
+)
+
+foreach ($path in $wuPolicyPaths) {
+    $resultsWuPolicy += "<h3>$path</h3>"
+
+    $output = cmd.exe /c "reg query `"$path`" /s" 2>&1
+
+    if ($LASTEXITCODE -eq 0) {
+        $resultsWuPolicy += "<pre>$($output -join "`r`n")</pre>"
+    }
+    else {
+        $resultsWuPolicy += "<pre>Registry path not found or not accessible.</pre>"
+    }
+}
+
+#Windows Update COM Object Check
+
+$resultsWuCom = ""
+
+try {
+
+    $updateSession = New-Object -ComObject Microsoft.Update.Session
+
+    $resultsWuCom += "<h3>Microsoft.Update.Session</h3>"
+    $resultsWuCom += "COM object successfully created.<br><br>"
+
+    $updateSearcher = $updateSession.CreateUpdateSearcher()
+
+    $resultsWuCom += "<b>Server Selection:</b> $($updateSearcher.ServerSelection)<br>"
+    $resultsWuCom += "(Server selections: 0 = Default; 1 = Managed Server (WSUS/SCCM); 2 = Windows Update; 3 = Others)<br>"
+    $resultsWuCom += "<b>Online:</b> $($updateSearcher.Online)<br>"
+    $resultsWuCom += "<b>IncludePotentiallySupersededUpdates:</b> $($updateSearcher.IncludePotentiallySupersededUpdates)<br><br>"
+
+    # History count
+    $historyCount = $updateSearcher.GetTotalHistoryCount()
+
+    $resultsWuCom += "<b>Total Update History Count:</b> $historyCount<br><br>"
+
+    
+}
+catch {
+
+    $resultsWuCom += "<h3>Microsoft.Update.Session</h3>"
+    $resultsWuCom += "<b>ERROR:</b> $($_.Exception.Message)<br>"
+    
+}
+
+# Delivery Optimization Settings
+
+$resultsDO = ""
+
+try {
+    $doPerf = Get-DeliveryOptimizationPerfSnap -ErrorAction Stop
+    $resultsDO += "<h3>Delivery Optimization Performance Snapshot</h3>"
+    $resultsDO += "<pre>$($doPerf | Format-List * | Out-String)</pre>"
+}
+catch {
+    $resultsDO += "<h3>Delivery Optimization Performance Snapshot</h3>"
+    $resultsDO += "<pre>Error: $($_.Exception.Message)</pre>"
+}
+
+
+$doService = Get-Service -Name DoSvc -ErrorAction SilentlyContinue
+$resultsDO += "<h3>Delivery Optimization Service</h3>"
+$resultsDO += "<pre>$($doService | Format-List * | Out-String)</pre>"
+
+$doModes = "0 = HTTP only<br>
+1 = LAN peers<br>
+2 = Group peers<br>
+3 = Internet peers<br>
+99 = Simple download mode<br>
+100 = Bypass"
+
+$resultsDO += "<h3>Helper to Delivery Optimization Modes</h3>"
+$resultsDO += $doModes
+
+# Windows Update Agent Version
+
+$resultsWuaVersion = ""
+
+try {
+
+    $wuaVersion = (Get-Item "$env:windir\system32\wuaueng.dll").VersionInfo
+
+    $resultsWuaVersion += "<h3>Windows Update Agent Version</h3>"
+
+    $resultsWuaVersion += @"
+<pre>
+FileVersion     : $($wuaVersion.FileVersion)
+ProductVersion  : $($wuaVersion.ProductVersion)
+ProductName     : $($wuaVersion.ProductName)
+CompanyName     : $($wuaVersion.CompanyName)
+FileDescription : $($wuaVersion.FileDescription)
+OriginalFilename: $($wuaVersion.OriginalFilename)
+</pre>
+"@
+
+}
+catch {
+
+    $resultsWuaVersion += "<h3>Windows Update Agent Version</h3>"
+    $resultsWuaVersion += "<pre>Error: $($_.Exception.Message)</pre>"
+
+}
+
+# Dsregcmd status
+$dsregcmd = dsregcmd /status | Out-String
+$dsregcmdEncoded = [System.Web.HttpUtility]::HtmlEncode($dsregcmd)
+$dsregcmdHtml = "<pre>$dsregcmdEncoded</pre>"
 
 
 
@@ -500,6 +626,47 @@ $htmlContent += @"
       <br>
       <h2 style="margin-top:20px;">Last Trigger Time of the Actions</h2>
       <div class="section small" style="margin-bottom:10px;">$lastTriggerForActionsHtml</div>
+      <br>
+      <br>
+
+      <details>
+        <summary><b>Windows Update and Delivery Optimization Registry Keys</b></summary>
+        <p>
+            $resultsWuPolicy
+        </p>
+      </details>
+
+      <details>
+        <summary><b>Delivery Optimization Settings</b></summary>
+        <p>
+            $resultsDO
+        </p>
+      </details>
+
+      <details>
+        <summary><b>Windows Update COM Object State</b></summary>
+        <p>
+            $resultsWuCom
+       </p>
+      </details>
+
+
+      <details>
+        <summary><b>Windows Update Agent Version</b></summary>
+        <p>
+        $resultsWuaVersion
+        </p>
+      </details>
+
+      <details>
+        <summary><b>DSREGCMD /STATUS</b></summary>
+        <p>
+      $dsregcmdHtml
+       </p>
+      </details>
+
+
+
     </section>
 
     
@@ -1321,7 +1488,7 @@ $includedLogs = @(
 # regex for error searching
 $regexError = '(?i)\b(error|failed|failure|fatal|exception|missing|0x[0-9a-f]{4,8})\b'
 
-$resultsFromLogs = ""
+$logErrors = @{}
 
 Get-ChildItem -Path "C:\Windows\CCM\Logs" -Filter *.log |
 Where-Object { $includedLogs -contains $_.Name } |
@@ -1332,25 +1499,131 @@ ForEach-Object {
     Get-Content -Path $_.FullName -ErrorAction SilentlyContinue |
     ForEach-Object {
 
-        if ($_ -match '<!\[LOG\[(.*?)\]LOG\]!>') {
+        $line = $_
+
+        if ($line -match '<!\[LOG\[(.*?)\]LOG\]!>') {
 
             $logMessage = $matches[1]
 
             if ($logMessage -match $regexError) {
-                $textForAppend = "<b>$logName</b> : $logMessage <br>"
-                if (-not $resultsFromLogs.Contains($textForAppend)) {
-                    $resultsFromLogs += $textForAppend
+
+                $logDateTime = $null
+
+                if ($line -match 'time="([^"]+)".*date="([^"]+)"') {
+                    $timePart = $matches[1] -replace '\+.*$', ''
+                    $datePart = $matches[2]
+
+                    $logDateTime = [datetime]::ParseExact(
+                        "$datePart $timePart",
+                        'MM-dd-yyyy HH:mm:ss.fff',
+                        $null
+                    )
+                }
+
+                $key = "$logName|$logMessage"
+
+                if (
+                    -not $logErrors.ContainsKey($key) -or
+                    $logDateTime -gt $logErrors[$key].DateTime
+                ) {
+                    $logErrors[$key] = [PSCustomObject]@{
+                        LogName  = $logName
+                        Message  = $logMessage
+                        DateTime = $logDateTime
+                    }
                 }
             }
         }
     }
+}
+
+$resultsFromLogs = ""
+
+$logErrors.Values |
+Sort-Object DateTime -Descending |
+ForEach-Object {
+    $resultsFromLogs += "<b>$($_.LogName)</b> [$($_.DateTime.ToString('yyyy-MM-dd HH:mm:ss'))] : $($_.Message) <br>"
 }
 
 
 # regex for error codes translation
 $regexError = '(?i)\b(0x[0-9a-f]{4,8})\b'
 
+function Resolve-ErrorCode {
+    param (
+        [string]$ErrorCode
+    )
+
+    $code = $ErrorCode.ToLower()
+
+    if ($code -eq "0x00000000" -or $code -eq "0x0") {
+        return "Success / not an error"
+    }
+
+    try {
+        $number = [Convert]::ToInt64($code, 16)
+    }
+    catch {
+        return "Invalid error code"
+    }
+
+    # Win32 direkt feloldás
+    try {
+        $msg = (New-Object ComponentModel.Win32Exception([int]$number)).Message
+
+        if ($msg -and $msg -notmatch '^Unknown error') {
+            return $msg
+        }
+    }
+    catch {}
+
+    # HRESULT alsó 16 bit Win32 hibakódként
+    try {
+        $lowWord = [int]($number -band 0xFFFF)
+        $msg = (New-Object ComponentModel.Win32Exception($lowWord)).Message
+
+        if ($msg -and $msg -notmatch '^Unknown error') {
+            return "$msg [decoded from low word: 0x$('{0:x4}' -f $lowWord)]"
+        }
+    }
+    catch {}
+
+    # HRESULT / COM feloldás
+    try {
+        $exception = [Runtime.InteropServices.Marshal]::GetExceptionForHR([int]$number)
+
+        if (
+            $exception -and
+            $exception.Message -and
+            $exception.Message -notmatch '^Exception from HRESULT'
+        ) {
+            return $exception.Message
+        }
+    }
+    catch {}
+
+    # Ismert speciális kódok
+    $knownErrors = @{
+        "0x2ee7"     = "ERROR_INTERNET_NAME_NOT_RESOLVED / DNS name could not be resolved"
+        "0x80072ee7" = "ERROR_INTERNET_NAME_NOT_RESOLVED / DNS name could not be resolved"
+        "0x87d00213" = "ConfigMgr/SCCM client error. Not a standard Win32 error; check LocationServices.log, ClientIDManagerStartup.log, CcmMessaging.log, CAS.log, UpdatesDeployment.log."
+    }
+
+    if ($knownErrors.ContainsKey($code)) {
+        return $knownErrors[$code]
+    }
+
+    return "Unknown error ($code)"
+}
+
 $resultsForErrorCodesFromLogs = ""
+
+$uniqueErrorCodes = [System.Collections.Generic.HashSet[string]]::new()
+
+$ignoreCodes = @(
+    "0x00000000",
+    "0x0"
+)
 
 Get-ChildItem -Path "C:\Windows\CCM\Logs" -Filter *.log |
 Where-Object { $includedLogs -contains $_.Name } |
@@ -1361,29 +1634,39 @@ ForEach-Object {
     Get-Content -Path $_.FullName -ErrorAction SilentlyContinue |
     ForEach-Object {
 
-        if ($_ -match '<!\[LOG\[(.*?)\]LOG\]!>') {
+        $line = $_
+
+        if ($line -match '<!\[LOG\[(.*?)\]LOG\]!>') {
 
             $logMessage = $matches[1]
 
-            # Összes hibakód kinyerése a sorból
             $errorMatches = [regex]::Matches($logMessage, $regexError)
 
             foreach ($match in $errorMatches) {
-                $errorCode = $match.Groups[1].Value
 
-                 $num = if ($code -match "^0x") { [Convert]::ToInt32($code, 16) } else { [int]"$errorCode" }
-                 $msg = (New-Object ComponentModel.Win32Exception($num)).Message
+                if ($match.Groups.Count -gt 1 -and $match.Groups[1].Value) {
+                    $errorCode = $match.Groups[1].Value.ToLower()
+                }
+                else {
+                    $errorCode = $match.Value.ToLower()
+                }
 
-                $textForAppend = "<b>$errorCode</b> : $msg <br>"
+                if ($ignoreCodes -contains $errorCode) {
+                    continue
+                }
 
-                if (-not $resultsForErrorCodesFromLogs.Contains($textForAppend)) {
-                    $resultsForErrorCodesFromLogs += $textForAppend
+                $key = "$logName|$errorCode"
+
+                if ($uniqueErrorCodes.Add($key)) {
+
+                    $msg = Resolve-ErrorCode -ErrorCode $errorCode
+
+                    $resultsForErrorCodesFromLogs += "<b>$logName</b> : <b>$errorCode</b> - $msg <br><small>$logMessage</small><br>"
                 }
             }
         }
     }
 }
-
 
 # dism and cbs log analysis
 $regexError = '(?i)\b0x[0-9a-f]{4,8}\b'
@@ -1393,39 +1676,105 @@ $logFiles = @(
     "C:\Windows\Logs\CBS\CBS.log"
 )
 
-$uniqueErrors = [System.Collections.Generic.HashSet[string]]::new()
-
-$resultsForDismAndCbs = ""
+$latestErrors = @{}
 
 foreach ($logFile in $logFiles) {
     if (Test-Path $logFile) {
 
         $logName = Split-Path $logFile -Leaf
+        $lineNumber = 0
 
         Get-Content -Path $logFile -ErrorAction SilentlyContinue |
         ForEach-Object {
 
-            $errorMatches = [regex]::Matches($_, $regexError)
+            $lineNumber++
+            $line = $_
+
+            $errorMatches = [regex]::Matches($line, $regexError)
 
             foreach ($match in $errorMatches) {
+
                 $errorCode = $match.Value.ToLower()
+                $logDateTime = $null
 
-                if ($uniqueErrors.Add("$logName|$errorCode")) {
-
+                # DISM és CBS esetén is a sor elején jellemzően ez van:
+                # 2025-05-09 13:22:11
+                if ($line -match '^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})') {
                     try {
-                        $errorNumber = [Convert]::ToInt32($errorCode, 16)
-                        $errorMessage = (New-Object ComponentModel.Win32Exception($errorNumber)).Message
+                        $logDateTime = [datetime]::ParseExact(
+                            $matches[1],
+                            'yyyy-MM-dd HH:mm:ss',
+                            [System.Globalization.CultureInfo]::InvariantCulture
+                        )
                     }
                     catch {
-                        $errorMessage = "Unknown error code"
+                        $logDateTime = $null
+                    }
+                }
+
+                try {
+                    $errorNumber = [Convert]::ToInt32($errorCode, 16)
+                    $errorMessage = (New-Object ComponentModel.Win32Exception($errorNumber)).Message
+                }
+                catch {
+                    $errorMessage = "Unknown error code"
+                }
+
+                $key = "$logName|$errorCode"
+
+                if (-not $latestErrors.ContainsKey($key)) {
+                    $latestErrors[$key] = [PSCustomObject]@{
+                        LogName      = $logName
+                        ErrorCode    = $errorCode
+                        ErrorMessage = $errorMessage
+                        DateTime     = $logDateTime
+                        LineNumber   = $lineNumber
+                    }
+                }
+                else {
+                    $current = $latestErrors[$key]
+
+                    $isNewer = $false
+
+                    if ($logDateTime -and $current.DateTime) {
+                        $isNewer = $logDateTime -gt $current.DateTime
+                    }
+                    elseif ($logDateTime -and -not $current.DateTime) {
+                        $isNewer = $true
+                    }
+                    elseif (-not $logDateTime -and -not $current.DateTime) {
+                        $isNewer = $lineNumber -gt $current.LineNumber
                     }
 
-                    # HTML kimenet
-                    $resultsForDismAndCbs += "<b>$logName</b> : $errorCode - $errorMessage <br>"
+                    if ($isNewer) {
+                        $latestErrors[$key] = [PSCustomObject]@{
+                            LogName      = $logName
+                            ErrorCode    = $errorCode
+                            ErrorMessage = $errorMessage
+                            DateTime     = $logDateTime
+                            LineNumber   = $lineNumber
+                        }
+                    }
                 }
             }
         }
     }
+}
+
+$resultsForDismAndCbs = ""
+
+$latestErrors.Values |
+Sort-Object DateTime, LineNumber -Descending |
+ForEach-Object {
+
+    $dateText = if ($_.DateTime) {
+        $_.DateTime.ToString('yyyy-MM-dd HH:mm:ss')
+    }
+    else {
+        "Unknown date"
+    }
+
+    $resultsForDismAndCbs += "<b>$($_.LogName)</b> [$dateText] : $($_.ErrorCode) - $($_.ErrorMessage) <br>"
 }
 
 function Parse-CMLog {
@@ -1586,3 +1935,4 @@ $hostname = $env:COMPUTERNAME
 $outputPath = "C:\Temp\" + $hostname + "_ConfigMgr_TS_Report.html"
 
 $htmlContent | Out-File -FilePath $outputPath -Encoding UTF8
+
