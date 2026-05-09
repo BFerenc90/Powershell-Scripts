@@ -561,7 +561,7 @@ catch {
 # Generate Energy report
 Write-Host "Generating Energy Report... (10 sec)"
 $energyReportPath = "$env:TEMP\energy-report.html"
-#powercfg /energy /output $energyReportPath /duration 10 | Out-Null
+powercfg /energy /output $energyReportPath /duration 10 | Out-Null
 
 $energyHtml = Get-Content $energyReportPath -Raw
 
@@ -584,7 +584,7 @@ $energyBody
 
 # Check Disk
 Write-Host "Checking Disk..."
-#$checkDisk = chkdsk /scan | Out-String
+$checkDisk = chkdsk /scan | Out-String
 $checkDiskEncoded = [System.Web.HttpUtility]::HtmlEncode($checkDisk)
 $checkDiskHtml = "<pre>$checkDiskEncoded</pre>"
 
