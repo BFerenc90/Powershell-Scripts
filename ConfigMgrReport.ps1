@@ -489,24 +489,46 @@ foreach ($svc in $services) {
 $resultsServiceSd += "<br><br><b>It is useful to compare this settings with another computers if there are access denied errors.<br>The OS and buildnumber have to be the same for comparing the settings!</b>"
 
 # Hardware errors in Event log
-# System Event Log - DHCP / WHEA related events
+# System Event Log - WHEA related events
 
 $resultsSystemEvents = ""
 
 try {
 
     $providers = @(
-        "Microsoft-Windows-Kernel-WHEA",
-        "Microsoft-Windows-WHEA-Logger"
+        "WHEA-Logger",
+        "Microsoft-Windows-WHEA-Logger",
+        "Kernel-WHEA",
+        "disk",
+        "storahci",
+        "stornvme",
+        "Ntfs",
+        "volmgr",
+        "BugCheck",
+        "Microsoft-Windows-Kernel-Power",
+        "Display",
+        "nvlddmkm",
+        "amdkmdag",
+        "Kernel-PnP",
+        "MemoryDiagnostics-Results"
     )
 
     $events = Get-WinEvent -FilterHashtable @{
-        LogName      = "System"
-        ProviderName = $providers
+        LogName = "System"
     } -ErrorAction SilentlyContinue |
+
+    Where-Object {
+        ($providers -contains $_.ProviderName) -and
+        (
+            $_.LevelDisplayName -eq "Error" -or
+            $_.LevelDisplayName -eq "Critical" -or
+            $_.LevelDisplayName -eq "Warning"
+        )
+    } |
+
     Sort-Object TimeCreated -Descending
 
-    $resultsSystemEvents += "<h2>System Event Log - DHCP / WHEA Events</h2>"
+    $resultsSystemEvents += "<h2>System Event Log - Hardware Related Events</h2>"
 
     if ($events) {
 
@@ -544,18 +566,114 @@ try {
     }
     else {
 
-        $resultsSystemEvents += "<pre>No matching events found.</pre>"
+        $resultsSystemEvents += "<pre>No matching Warning/Error/Critical events found.</pre>"
     }
 
 }
 catch {
 
-    $resultsSystemEvents += "<h2>System Event Log for WHEA Events</h2>"
+    $resultsSystemEvents += "<h2>System Event Log - Hardware Related Events</h2>"
     $resultsSystemEvents += "<pre>Error: $($_.Exception.Message)</pre>"
 
 }
 
+#BSOD / Unexpected Shutdown Events
+$resultsBSOD = ""
 
+$events = Get-WinEvent -FilterHashtable @{
+    LogName = "System"
+    Id = 41,1001,6008
+} -ErrorAction SilentlyContinue |
+Sort-Object TimeCreated -Descending
+
+$resultsBSOD += "<h2>BSOD / Unexpected Shutdown Events</h2>"
+
+if ($events) {
+
+    $resultsBSOD += @"
+<table border='1' cellpadding='5' cellspacing='0'>
+<tr>
+<th>TimeCreated</th>
+<th>Provider</th>
+<th>Event ID</th>
+<th>Level</th>
+<th>Message</th>
+</tr>
+"@
+
+    foreach ($event in $events) {
+
+        $message = $event.Message -replace '&', '&amp;'
+        $message = $message -replace '<', '&lt;'
+        $message = $message -replace '>', '&gt;'
+        $message = $message -replace "`r`n", "<br>"
+
+        $resultsBSOD += @"
+<tr>
+<td>$($event.TimeCreated)</td>
+<td>$($event.ProviderName)</td>
+<td>$($event.Id)</td>
+<td>$($event.LevelDisplayName)</td>
+<td>$message</td>
+</tr>
+"@
+    }
+
+    $resultsBSOD += "</table>"
+}
+else {
+
+    $resultsBSOD += "<pre>No BSOD or unexpected shutdown events found.</pre>"
+}
+
+
+# BSOD dump existence check only
+
+$resultsBSODFile = ""
+
+$memoryDmpPath = "$env:SystemRoot\MEMORY.DMP"
+$minidumpPath  = "$env:SystemRoot\Minidump"
+
+$resultsBSODFile += "<h2>BSOD Dump File Check</h2>"
+
+# MEMORY.DMP
+$resultsBSODFile += "<h3>MEMORY.DMP</h3>"
+
+if (Test-Path $memoryDmpPath) {
+
+    $memoryDmp = Get-Item $memoryDmpPath
+
+    $resultsBSODFile += "<pre>"
+    $resultsBSODFile += "Exists   : Yes`r`n"
+    $resultsBSODFile += "Path     : $($memoryDmp.FullName)`r`n"
+    $resultsBSODFile += "Size MB  : $([math]::Round($memoryDmp.Length / 1MB, 2))`r`n"
+    $resultsBSODFile += "Modified : $($memoryDmp.LastWriteTime)`r`n"
+    $resultsBSODFile += "</pre>"
+}
+else {
+
+    $resultsBSODFile += "<pre>Exists: No</pre>"
+}
+
+# Minidump folder / files
+$resultsBSODFile += "<h3>Minidump</h3>"
+
+if (Test-Path $minidumpPath) {
+
+    $minidumps = Get-ChildItem `
+        $minidumpPath `
+        -Filter "*.dmp" `
+        -ErrorAction SilentlyContinue
+
+    $resultsBSODFile += "<pre>"
+    $resultsBSODFile += "Folder exists : Yes`r`n"
+    $resultsBSODFile += "Dump files    : $($minidumps.Count)`r`n"
+    $resultsBSODFile += "</pre>"
+}
+else {
+
+    $resultsBSODFile += "<pre>Folder exists: No</pre>"
+}
 
 
 # Generate Energy report
@@ -972,6 +1090,21 @@ $htmlContent += @"
         <summary><b>Hardware Error in Event Logs</b></summary>
         <p>
             $resultsSystemEvents
+      </p>
+      </details>
+
+
+      <details>
+        <summary><b>Bluesceen Events / Unexpected Shutdowns</b></summary>
+        <p>
+            $resultsBSOD
+      </p>
+      </details>
+
+      <details>
+        <summary><b>MEMORY.DMP and Minidump</b></summary>
+        <p>
+            $resultsBSODFile
       </p>
       </details>
 
@@ -2237,4 +2370,3 @@ $hostname = $env:COMPUTERNAME
 $outputPath = "C:\Temp\" + $hostname + "_ConfigMgr_TS_Report.html"
 
 $htmlContent | Out-File -FilePath $outputPath -Encoding UTF8
-
