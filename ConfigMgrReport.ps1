@@ -474,6 +474,22 @@ $dsregcmdEncoded = [System.Web.HttpUtility]::HtmlEncode($dsregcmd)
 $dsregcmdHtml = "<pre>$dsregcmdEncoded</pre>"
 
 
+$resultsServiceSd = ""
+
+$services = @("bits", "wuauserv", "cryptsvc", "trustedinstaller")
+
+foreach ($svc in $services) {
+    $resultsServiceSd += "<h3>$svc service security descriptor</h3>"
+
+    $output = cmd.exe /c "sc.exe sdshow $svc" 2>&1
+
+    $resultsServiceSd += "<pre>$($output -join "`r`n")</pre>"
+}
+
+$resultsServiceSd += "<br><br><b>It is useful to compare this settings with another computers if there are access denied errors.<br>The OS and buildnumber have to be the same for comparing the settings!</b>"
+
+
+
 
 # Last Update Informations
 $Session = New-Object -ComObject Microsoft.Update.Session
@@ -656,6 +672,13 @@ $htmlContent += @"
         <p>
         $resultsWuaVersion
         </p>
+      </details>
+
+      <details>
+        <summary><b>Security Descriptors for Key Services</b></summary>
+        <p>
+      $resultsServiceSd
+      </p>
       </details>
 
       <details>
