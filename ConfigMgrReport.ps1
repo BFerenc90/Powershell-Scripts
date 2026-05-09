@@ -488,6 +488,76 @@ foreach ($svc in $services) {
 
 $resultsServiceSd += "<br><br><b>It is useful to compare this settings with another computers if there are access denied errors.<br>The OS and buildnumber have to be the same for comparing the settings!</b>"
 
+# Hardware errors in Event log
+# System Event Log - DHCP / WHEA related events
+
+$resultsSystemEvents = ""
+
+try {
+
+    $providers = @(
+        "Microsoft-Windows-Kernel-WHEA",
+        "Microsoft-Windows-WHEA-Logger"
+    )
+
+    $events = Get-WinEvent -FilterHashtable @{
+        LogName      = "System"
+        ProviderName = $providers
+    } -ErrorAction SilentlyContinue |
+    Sort-Object TimeCreated -Descending
+
+    $resultsSystemEvents += "<h2>System Event Log - DHCP / WHEA Events</h2>"
+
+    if ($events) {
+
+        $resultsSystemEvents += @"
+<table border='1' cellpadding='5' cellspacing='0'>
+<tr>
+    <th>TimeCreated</th>
+    <th>Provider</th>
+    <th>Event ID</th>
+    <th>Level</th>
+    <th>Message</th>
+</tr>
+"@
+
+        foreach ($event in $events) {
+
+            $message = $event.Message -replace '&', '&amp;'
+            $message = $message -replace '<', '&lt;'
+            $message = $message -replace '>', '&gt;'
+            $message = $message -replace "`r`n", "<br>"
+            $message = $message -replace "`n", "<br>"
+
+            $resultsSystemEvents += @"
+<tr>
+    <td>$($event.TimeCreated)</td>
+    <td>$($event.ProviderName)</td>
+    <td>$($event.Id)</td>
+    <td>$($event.LevelDisplayName)</td>
+    <td>$message</td>
+</tr>
+"@
+        }
+
+        $resultsSystemEvents += "</table>"
+    }
+    else {
+
+        $resultsSystemEvents += "<pre>No matching events found.</pre>"
+    }
+
+}
+catch {
+
+    $resultsSystemEvents += "<h2>System Event Log for WHEA Events</h2>"
+    $resultsSystemEvents += "<pre>Error: $($_.Exception.Message)</pre>"
+
+}
+
+
+
+
 # Generate Energy report
 Write-Host "Generating Energy Report... (10 sec)"
 $energyReportPath = "$env:TEMP\energy-report.html"
@@ -898,6 +968,12 @@ $htmlContent += @"
       <br>
       <h2>Diagnostic</h2>
 
+      <details>
+        <summary><b>Hardware Error in Event Logs</b></summary>
+        <p>
+            $resultsSystemEvents
+      </p>
+      </details>
 
       <details>
         <summary><b>Energy Report</b></summary>
