@@ -473,7 +473,7 @@ $dsregcmd = dsregcmd /status | Out-String
 $dsregcmdEncoded = [System.Web.HttpUtility]::HtmlEncode($dsregcmd)
 $dsregcmdHtml = "<pre>$dsregcmdEncoded</pre>"
 
-
+# Service Security Descriptor
 $resultsServiceSd = ""
 
 $services = @("bits", "wuauserv", "cryptsvc", "trustedinstaller")
@@ -488,8 +488,126 @@ foreach ($svc in $services) {
 
 $resultsServiceSd += "<br><br><b>It is useful to compare this settings with another computers if there are access denied errors.<br>The OS and buildnumber have to be the same for comparing the settings!</b>"
 
+# Generate Energy report
+Write-Host "Generating Energy Report... (10 sec)"
+$energyReportPath = "$env:TEMP\energy-report.html"
+#powercfg /energy /output $energyReportPath /duration 10 | Out-Null
+
+$energyHtml = Get-Content $energyReportPath -Raw
+
+if ($energyHtml -match '(?is)<body.*?>(.*)</body>') {
+    $energyBody = $matches[1]
+}
+else {
+    $energyBody = $energyHtml
+}
+
+$resultsEnergy = ""
+
+$resultsEnergy += @"
+<h2>PowerCfg Energy Report</h2>
+<div style='border:1px solid #ccc;padding:10px;margin:10px;overflow:auto;'>
+$energyBody
+</div>
+"@
 
 
+# Check Disk
+Write-Host "Checking Disk..."
+#$checkDisk = chkdsk /scan | Out-String
+$checkDiskEncoded = [System.Web.HttpUtility]::HtmlEncode($checkDisk)
+$checkDiskHtml = "<pre>$checkDiskEncoded</pre>"
+
+$resultsReliability = ""
+
+try {
+
+    $racData = Get-CimInstance `
+        -Namespace "root\cimv2" `
+        -ClassName Win32_ReliabilityRecords |
+    Sort-Object TimeGenerated -Descending |
+    Select-Object -First 100
+
+    $resultsReliability += "<h2>Reliability Monitor Events</h2>"
+
+    if ($racData) {
+
+        $resultsReliability += "<table border='1' cellpadding='5' cellspacing='0'>"
+
+        $resultsReliability += @"
+<tr>
+<th>TimeGenerated</th>
+<th>SourceName</th>
+<th>EventIdentifier</th>
+<th>ProductName</th>
+<th>Message</th>
+</tr>
+"@
+
+        foreach ($item in $racData) {
+
+            $resultsReliability += @"
+<tr>
+<td>$($item.TimeGenerated)</td>
+<td>$($item.SourceName)</td>
+<td>$($item.EventIdentifier)</td>
+<td>$($item.ProductName)</td>
+<td>$($item.Message)</td>
+</tr>
+"@
+        }
+
+        $resultsReliability += "</table>"
+    }
+    else {
+
+        $resultsReliability += "<pre>No reliability records found.</pre>"
+    }
+
+}
+catch {
+
+    $resultsReliability += "<pre>Error: $($_.Exception.Message)</pre>"
+
+}
+
+# Winsat
+Write-Host "Checking Windows System Assessment..."
+$winsat = winsat formal | Out-String
+$winsatEncoded = [System.Web.HttpUtility]::HtmlEncode($winsat)
+$winsatHtml = "<pre>$winsatEncoded</pre>"
+
+# systeminfo
+Write-Host "Generating Systeminfo Report..."
+$systeminfo = systeminfo | Out-String
+$systeminfoEncoded = [System.Web.HttpUtility]::HtmlEncode($systeminfo)
+$systeminfoHtml = "<pre>$systeminfoEncoded</pre>"
+
+# driver infos
+Write-Host "Generating Driver Info Report..."
+$resultsDriverQuery = ""
+
+try {
+    $driverCsv = cmd.exe /c "driverquery /v /fo csv" 2>&1
+
+    $driverObjects = $driverCsv | ConvertFrom-Csv
+
+    $resultsDriverQuery += "<h2>Driver Query</h2>"
+
+    if ($driverObjects) {
+        $resultsDriverQuery += $driverObjects |
+            ConvertTo-Html -Fragment `
+                -PreContent "<h3>Installed Drivers</h3>" |
+            Out-String
+    }
+    else {
+        $resultsDriverQuery += "<pre>No driver data returned.</pre>"
+    }
+}
+catch {
+    $resultsDriverQuery += "<h2>Driver Query</h2>"
+    $resultsDriverQuery += "<pre>Error: $($_.Exception.Message)</pre>"
+}
 
 # Last Update Informations
 $Session = New-Object -ComObject Microsoft.Update.Session
@@ -542,6 +660,21 @@ $doStatus = Get-DeliveryOptimizationStatus | select `
 
 
 $doLogs = Get-DeliveryOptimizationLog | Select-Object -last 150 | select TimeCreated, Message | ConvertTo-Html -Fragment
+
+
+# DISM packages
+Write-Host "Collecting DISM Package Informations..."
+$dismPackages = dism /online /get-packages /format:table | Out-String
+$dismPackagesEncoded = [System.Web.HttpUtility]::HtmlEncode($dismPackages)
+$dismPackagesHtml = "<pre>$dismPackagesEncoded</pre>"
+
+# DISM capabilities
+Write-Host "Collecting DISM Capabilities Informations..."
+$dismCap = dism /online /get-capabilities /format:table | Out-String
+$dismCapEncoded = [System.Web.HttpUtility]::HtmlEncode($dismCap)
+$dismCapHtml = "<pre>$dismCapEncoded</pre>"
+
+
 
 # Hardware Informations
 $disk = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='C:'"
@@ -689,7 +822,6 @@ $htmlContent += @"
       </details>
 
 
-
     </section>
 
     
@@ -741,6 +873,77 @@ $htmlContent += @"
             $doLogs
         </p>
       </details>
+
+      <br>
+      <br>
+      <h2>DISM</h2>
+
+      <details>
+        <summary><b>DISM Packages</b></summary>
+        <p>
+        $dismPackagesHtml
+      </p>
+      </details>
+
+      <details>
+        <summary><b>DISM Capabilities</b></summary>
+        <p>
+        $dismCapHtml
+      </p>
+      </details>
+
+      
+
+      <br>
+      <br>
+      <h2>Diagnostic</h2>
+
+
+      <details>
+        <summary><b>Energy Report</b></summary>
+        <p>
+            $resultsEnergy
+      </p>
+      </details>
+
+
+      <details>
+        <summary><b>Check Disk</b></summary>
+        <p>
+            $checkDiskHtml
+      </p>
+      </details>
+      
+
+      <details>
+        <summary><b>Reliability Results</b></summary>
+        <p>
+            $resultsReliability
+      </p>
+      </details>
+
+      <details>
+        <summary><b>Windows System Assessment</b></summary>
+        <p>
+            $winsatHtml
+      </p>
+      </details>
+
+      <details>
+        <summary><b>Sysinfo</b></summary>
+        <p>
+            $systeminfoHtml
+      </p>
+      </details>
+
+      <details>
+        <summary><b>Driver Informations</b></summary>
+        <p>
+            $resultsDriverQuery
+      </p>
+      </details>
+
+      <h3>Useful tools: perfmon /rel and perfmon /report</h3>
 
     </section>
 
