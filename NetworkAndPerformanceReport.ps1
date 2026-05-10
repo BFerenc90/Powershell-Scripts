@@ -1,5 +1,7 @@
 $hostname = $env:COMPUTERNAME
+$domain = (Get-CimInstance Win32_ComputerSystem).Domain
 
+$diagnosticSummaryForHTML = ""
 
 # HTML style
 $htmlContent = @"
@@ -308,7 +310,7 @@ $systemEvents = Get-WinEvent -FilterHashtable @{
     LogName = 'System'
     StartTime = $since
 } | Where-Object {
-    $_.LevelDisplayName -in 'Error','Warning', 'Critic', 'Hiba', 'Figyelmeztetés', 'Kritikus'
+    $_.LevelDisplayName -in 'Error','Warning', 'Critical', 'Hiba', 'Figyelmeztetés', 'Kritikus'
 } | Sort-Object TimeCreated -Descending | Select-Object TimeCreated, ProviderName, LevelDisplayName, Message | ConvertTo-Html -Fragment
 
 $isDomainMember = (Get-CimInstance Win32_ComputerSystem).PartOfDomain 
@@ -349,7 +351,8 @@ try {
         "nvlddmkm",
         "amdkmdag",
         "Kernel-PnP",
-        "MemoryDiagnostics-Results"
+        "MemoryDiagnostics-Results",
+        "MemoryDiagnostics"
     )
 
     $events = Get-WinEvent -FilterHashtable @{
@@ -370,6 +373,8 @@ try {
     $resultsSystemEvents += "<h2>System Event Log - Hardware Related Events</h2>"
 
     if ($events) {
+        
+        $diagnosticSummaryForHTML += "<span style='color:red;'>Hardware Errors in Event Logs Detected</span><br>"
 
         $resultsSystemEvents += @"
 <table border='1' cellpadding='5' cellspacing='0'>
@@ -429,6 +434,8 @@ $resultsBSOD += "<h2>BSOD / Unexpected Shutdown Events</h2>"
 
 if ($events) {
 
+    $diagnosticSummaryForHTML += "<span style='color:red;'>BSOD or Unexpected Shutdown Events Detected</span><br>"
+
     $resultsBSOD += @"
 <table border='1' cellpadding='5' cellspacing='0'>
 <tr>
@@ -480,6 +487,8 @@ $resultsBSODFile += "<h3>MEMORY.DMP</h3>"
 
 if (Test-Path $memoryDmpPath) {
 
+    $diagnosticSummaryForHTML += "<span style='color:red;'>Memory.dmp File Detected</span><br>"
+
     $memoryDmp = Get-Item $memoryDmpPath
 
     $resultsBSODFile += "<pre>"
@@ -498,6 +507,8 @@ else {
 $resultsBSODFile += "<h3>Minidump</h3>"
 
 if (Test-Path $minidumpPath) {
+    
+    $diagnosticSummaryForHTML += "<span style='color:red;'>Minidump Folder Detected</span><br>"
 
     $minidumps = Get-ChildItem `
         $minidumpPath `
@@ -545,6 +556,81 @@ $checkDisk = chkdsk /scan | Out-String
 $checkDiskEncoded = [System.Web.HttpUtility]::HtmlEncode($checkDisk)
 $checkDiskHtml = "<pre>$checkDiskEncoded</pre>"
 
+if (
+    $checkDisk -match "found problems" -or
+    $checkDisk -match "errors found" -or
+    $checkDisk -match "corrupt" -or
+    $checkDisk -match "failed" -or
+    $checkDisk -match "cannot continue"
+) {
+    $diagnosticSummaryForHTML += "<span style='color:red;'>Check Disk: Error or Corruption Detected</span><br>"
+}
+
+
+# Checking Disk Health
+$physicalDisks = Get-PhysicalDisk |
+    Select-Object FriendlyName, MediaType, HealthStatus, OperationalStatus, Size |
+    ConvertTo-Html -Fragment
+
+$badPhysicalDisks = $physicalDiskObjects | Where-Object {
+    $_.HealthStatus -ne "Healthy" -or
+    $_.OperationalStatus -ne "OK"
+}
+
+if ($badPhysicalDisks) {
+    foreach ($disk in $badPhysicalDisks) {
+        $diagnosticSummaryForHTML += "<span style='color:red;'>Physical Disk: $($disk.FriendlyName) - Health: $($disk.HealthStatus), Operational: $($disk.OperationalStatus)</span><br>"
+    }
+}
+
+
+# Disk Drives
+$diskDrives = Get-CimInstance Win32_DiskDrive |
+    Select-Object Model, InterfaceType, MediaType, Status, Size, SerialNumber |
+    ConvertTo-Html -Fragment
+
+$badDiskDrives = $diskDriveObjects | Where-Object {
+    $_.Status -ne "OK"
+}
+
+if ($badDiskDrives) {
+    foreach ($disk in $badDiskDrives) {
+        $diagnosticSummaryForHTML += "<span style='color:red;'>Disk Drive: $($disk.Model) - Status: $($disk.Status)</span><br>"
+
+    }
+}
+
+# Storage Reliability
+$storageReliability = Get-PhysicalDisk | ForEach-Object {
+    try {
+        $_ | Get-StorageReliabilityCounter |
+            Select-Object `
+                @{Name='Disk';Expression={$_.DeviceId}},
+                Temperature,
+                ReadErrorsTotal,
+                WriteErrorsTotal,
+                Wear,
+                PowerOnHours,
+                StartStopCycleCount
+    }
+    catch {}
+} | ConvertTo-Html -Fragment
+
+$badReliability = $storageReliabilityObjects | Where-Object {
+    $_.ReadErrorsTotal -gt 0 -or
+    $_.WriteErrorsTotal -gt 0 -or
+    $_.Wear -gt 80 -or
+    $_.Temperature -gt 60
+}
+
+if ($badReliability) {
+    foreach ($item in $badReliability) {
+        $diagnosticSummaryForHTML += "<span style='color:red;'>Storage Reliability: Disk $($item.Disk) - Temp: $($item.Temperature), ReadErrors: $($item.ReadErrorsTotal), WriteErrors: $($item.WriteErrorsTotal), Wear: $($item.Wear)</span><br>"
+    }
+}
+
+
+# Windows Reliability
 $resultsReliability = ""
 
 try {
@@ -598,11 +684,6 @@ catch {
 
 }
 
-# Winsat
-Write-Host "Checking Windows System Assessment..."
-$winsat = winsat formal | Out-String
-$winsatEncoded = [System.Web.HttpUtility]::HtmlEncode($winsat)
-$winsatHtml = "<pre>$winsatEncoded</pre>"
 
 # systeminfo
 Write-Host "Generating Systeminfo Report..."
@@ -637,7 +718,29 @@ catch {
 }
 
 
+# Problematic devices in Device Manager
+$problemDevices = Get-CimInstance Win32_PnPEntity |
+    Where-Object { $_.ConfigManagerErrorCode -ne 0 } |
+    Select-Object Name, Manufacturer, PNPClass, DeviceID, ConfigManagerErrorCode, Status |
+    ConvertTo-Html -Fragment
 
+if(Get-CimInstance Win32_PnPEntity |
+    Where-Object { $_.ConfigManagerErrorCode -ne 0 } |
+    Select-Object Name, Manufacturer, PNPClass, DeviceID, ConfigManagerErrorCode, Status){
+    $diagnosticSummaryForHTML += "<span style='color:red;'>Problematic Device(s) found in the Device Manager</span><br>"
+}
+
+
+
+
+
+# Diagnostic Summary Evaluation
+################################
+
+if($diagnosticSummaryForHTML -eq ""){
+    
+    $diagnosticSummaryForHTML = "<span style='color:green;'>No Errors found during the Diagnostic</span><br>"
+}
 
 
 $htmlContent += @"
@@ -678,6 +781,13 @@ $htmlContent += @"
 
       <h2>Diagnostic and Performance</h2>
 
+
+      <span>Summary</span>
+      <br>
+      <span>$diagnosticSummaryForHTML</span>
+      <br>
+      <br>
+
       <details>
         <summary><b>Hardware Error in Event Logs</b></summary>
         <p>
@@ -715,6 +825,12 @@ $htmlContent += @"
       </p>
       </details>
       
+      <details>
+        <summary><b>Physical Disk Health / SMART Data</b></summary>
+          <p>$physicalDisks</p>
+          <p>$diskDrives</p>
+          <p>$storageReliability</p>
+      </details>
 
       <details>
         <summary><b>Reliability Results</b></summary>
@@ -723,12 +839,6 @@ $htmlContent += @"
       </p>
       </details>
 
-      <details>
-        <summary><b>Windows System Assessment</b></summary>
-        <p>
-            $winsatHtml
-      </p>
-      </details>
 
       <details>
         <summary><b>Sysinfo</b></summary>
@@ -742,6 +852,11 @@ $htmlContent += @"
         <p>
             $resultsDriverQuery
       </p>
+      </details>
+
+      <details>
+          <summary><b>Problematic Devices in Device Manager</b></summary>
+          <p>$problemDevices</p>
       </details>
 
       <br>
@@ -921,7 +1036,7 @@ $htmlContent += @"
 
 
 
-$outputPath = "C:\Temp\" + $hostname + "_NetworkInfo_Report.html"
+$outputPath = "C:\Temp\" + $hostname + "_NetworkAndHardwareDiagnostic_Report.html"
 
 $htmlContent | Out-File -FilePath $outputPath -Encoding UTF8
 
