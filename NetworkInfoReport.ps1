@@ -311,11 +311,15 @@ $systemEvents = Get-WinEvent -FilterHashtable @{
     $_.LevelDisplayName -in 'Error','Warning', 'Critic', 'Hiba', 'Figyelmeztetés', 'Kritikus'
 } | Sort-Object TimeCreated -Descending | Select-Object TimeCreated, ProviderName, LevelDisplayName, Message | ConvertTo-Html -Fragment
 
-$isDomainMember = (Get-CimInstance Win32_ComputerSystem).PartOfDomain
+$isDomainMember = (Get-CimInstance Win32_ComputerSystem).PartOfDomain 
 $isDomainTrustOK = Test-ComputerSecureChannel
 
 try{
-    $nlTest = nltest /dsgetdc:corp.contoso.com
+    $nlTestBase = nltest /dsgetdc:corp.contoso.com | Out-String
+    $nlTestEncoded = [System.Web.HttpUtility]::HtmlEncode($nlTestBase)
+    $nlTest = "<pre>$nlTestEncoded</pre>"
+
+
 }
 catch{
     $nlTest = "The nltest failed"
@@ -536,7 +540,6 @@ $htmlContent += @"
 $outputPath = "C:\Temp\" + $hostname + "_NetworkInfo_Report.html"
 
 $htmlContent | Out-File -FilePath $outputPath -Encoding UTF8
-
 
 
 
