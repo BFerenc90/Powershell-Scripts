@@ -262,6 +262,10 @@ table {
 <body>
 "@
 
+Write-Host ""
+Write-Host "### Starting the collecting phase ###" -ForegroundColor Yellow
+Write-Host ""
+Write-Host "Collecting Basic MCM related Informations..."
 $domain = (Get-WmiObject Win32_ComputerSystem).Domain
 $adSite = Get-WMIObject Win32_NTDomain | Select -ExpandProperty ClientSiteName
 $hostname = $env:computername
@@ -269,6 +273,11 @@ $hostname = $env:computername
 $os = Get-CimInstance Win32_OperatingSystem
 $osName = $os.Caption
 $osVersion = $os.Version
+$osDisplayname = $os.Caption + ' Service Pack ' + $os.ServicePackMajorVersion
+$osDisplayVersion = Get-ItemPropertyValue -Path 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -Name 'DisplayVersion'
+$patchLevelUBR = Get-ItemPropertyValue -Path 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -Name 'UBR'
+$osInstallDate = $os.InstallDate
+$lastBootTime = $os.LastBootUpTime
 
 $sms = new-object -comobject 'Microsoft.SMS.Client'
 $siteCode = $sms.GetAssignedSite()
@@ -313,6 +322,10 @@ $ccmDirectory = $logDirectory.replace("\Logs", "")
 try{[datetime]$lastClientHealthRun = (Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\CCM\CcmEval").LastEvalTime}
     catch{$lastClientHealthRun=[datetime]::MinValue}
 
+$ccmexecStatus = Get-Service -Name CCMExec -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Status
+$ccmexecStartTime = Get-Process | Where-Object { $_.ProcessName -eq 'CCMExec' } | Select-Object -ExpandProperty StartTime
+$ccmexecText = "$ccmexecStatus since  $ccmexecStartTime"
+
 $actionmap = @{
 "{00000000-0000-0000-0000-000000000021}" = "Machine policy retrieval & evaluation cycle"
 "{00000000-0000-0000-0000-000000000022}" = "Machine policy evaluation cycle"
@@ -352,6 +365,7 @@ foreach($trigger in $schedulerHistory){
 
 # WSUS / Windows Update policy registry values
 
+Write-Host "Collecting Windows Update Policy Informations..."
 $resultsWuPolicy = ""
 
 $wuPolicyPaths = @(
@@ -411,7 +425,7 @@ catch {
 }
 
 # Delivery Optimization Settings
-
+Write-Host "Collecting Delivery Optimization Informations..."
 $resultsDO = ""
 
 try {
@@ -438,6 +452,61 @@ $doModes = "0 = HTTP only<br>
 
 $resultsDO += "<h3>Helper to Delivery Optimization Modes</h3>"
 $resultsDO += $doModes
+
+# Antivirus Settings
+Write-Host "Collecting Antivirus Product Informations..."
+$resultsAV = ""
+
+try {
+    $secCenterAV = Get-CimInstance -Query 'select companyName, displayName, versionNumber, productUptoDate, onAccessScanningEnabled FROM AntivirusProduct' -Namespace 'root\SecurityCenter'
+    $resultsAV += "<h3>Antivirus Product in Security Center</h3>"
+    $resultsAV += "<pre>$($secCenterAV | Format-List * | Out-String)</pre>"
+}
+catch {
+    $resultsAV += "<h3>Antivirus Product in Security Center</h3>"
+    $resultsAV += "<pre>Error: $($_.Exception.Message)</pre>"
+}
+
+try {
+    $secCenterAV2 = Get-CimInstance -Namespace root\SecurityCenter2 -Class AntiVirusProduct
+    $resultsAV += "<h3>Antivirus Product in Security Center2</h3>"
+    $resultsAV += "<pre>$($secCenterAV2 | Format-List * | Out-String)</pre>"
+}
+catch {
+    $resultsAV += "<h3>Antivirus Product in Security Center2</h3>"
+    $resultsAV += "<pre>Error: $($_.Exception.Message)</pre>"
+}
+
+
+try {
+    $mpCompStatus = Get-MpComputerStatus
+    $resultsAV += "<h3>MpComputerStatus</h3>"
+    $resultsAV += "<pre>$($mpCompStatus | Format-List * | Out-String)</pre>"
+}
+catch {
+    $resultsAV += "<h3>MpComputerStatus</h3>"
+    $resultsAV += "<pre>Error: $($_.Exception.Message)</pre>"
+}
+
+try {
+    $mpPreference = Get-MpPreference
+    $resultsAV += "<h3>MpPreference</h3>"
+    $resultsAV += "<pre>$($mpPreference | Format-List * | Out-String)</pre>"
+}
+catch {
+    $resultsAV += "<h3>MpPreference</h3>"
+    $resultsAV += "<pre>Error: $($_.Exception.Message)</pre>"
+}
+
+# License infos
+$licenseInfo = cscript.exe //Nologo "C:\Windows\system32\slmgr.vbs" /dlv | Out-String
+$licenseInfoEncoded = [System.Net.WebUtility]::HtmlEncode($licenseInfo)
+$licenseInfoHtml = "<pre>$licenseInfoEncoded</pre>"
+
+# System infos
+$systemInfo = cmd.exe /c SystemInfo.exe | Out-String
+$systemInfoEncoded = [System.Net.WebUtility]::HtmlEncode($systemInfo)
+$systemInfoHtml = "<pre>$systemInfoEncoded</pre>"
 
 # Windows Update Agent Version
 
@@ -469,9 +538,16 @@ catch {
 }
 
 # Dsregcmd status
+Write-Host "Collecting Dsregcmd Informations..."
 $dsregcmd = dsregcmd /status | Out-String
-$dsregcmdEncoded = [System.Web.HttpUtility]::HtmlEncode($dsregcmd)
+$dsregcmdEncoded = [System.Net.WebUtility]::HtmlEncode($dsregcmd)
 $dsregcmdHtml = "<pre>$dsregcmdEncoded</pre>"
+
+# Gpresult
+Write-Host "Collecting Gpresult Informations..."
+$gpresult = gpresult /Z /SCOPE COMPUTER | Out-String
+$gpresultEncoded = [System.Net.WebUtility]::HtmlEncode($gpresult)
+$gpresultHtml = "<pre>$gpresultEncoded</pre>"
 
 # Service Security Descriptor
 $resultsServiceSd = ""
@@ -490,6 +566,7 @@ $resultsServiceSd += "<br><br><b>It is useful to compare this settings with anot
 
 
 # Last Update Informations
+Write-Host "Collecting Installed and Missing Update Informations..."
 $Session = New-Object -ComObject Microsoft.Update.Session
 $Searcher = $Session.CreateUpdateSearcher()
 $HistoryCount = $Searcher.GetTotalHistoryCount()
@@ -541,22 +618,35 @@ $doStatus = Get-DeliveryOptimizationStatus | select `
 
 $doLogs = Get-DeliveryOptimizationLog | Select-Object -last 150 | select TimeCreated, Message | ConvertTo-Html -Fragment
 
+# Windows Update Sources
+$resultUpdateSources = ""
+$comObjectWU = New-Object -ComObject 'Microsoft.Update.ServiceManager' -ErrorAction Stop
+$updateSources = $comObjectWU.Services | select Name, IsManaged, OffersWindowsUpdates, IsDefaultAUService
+
+$resultUpdateSources += "<h3>Update Source List</h3>"
+$resultUpdateSources += "<pre>$($updateSources | Format-List * | Out-String)</pre>"
+
 
 # DISM packages
 Write-Host "Collecting DISM Package Informations..."
 $dismPackages = dism /online /get-packages /format:table | Out-String
-$dismPackagesEncoded = [System.Web.HttpUtility]::HtmlEncode($dismPackages)
+$dismPackagesEncoded = [System.Net.WebUtility]::HtmlEncode($dismPackages)
 $dismPackagesHtml = "<pre>$dismPackagesEncoded</pre>"
 
 # DISM capabilities
 Write-Host "Collecting DISM Capabilities Informations..."
 $dismCap = dism /online /get-capabilities /format:table | Out-String
-$dismCapEncoded = [System.Web.HttpUtility]::HtmlEncode($dismCap)
+$dismCapEncoded = [System.Net.WebUtility]::HtmlEncode($dismCap)
 $dismCapHtml = "<pre>$dismCapEncoded</pre>"
 
-
+# Installed features
+Write-Host "Collecting Installed Features Informations..."
+$installedFeatures = Get-WindowsOptionalFeature -Online | Where-Object State -eq Enabled | Out-String
+$installedFeaturesEncoded = [System.Net.WebUtility]::HtmlEncode($installedFeatures)
+$installedFeaturesHtml = "<pre>$installedFeaturesEncoded</pre>"
 
 # Hardware Informations
+Write-Host "Collecting Hardware Informations..."
 $disk = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='C:'"
 $cpu  = Get-CimInstance Win32_Processor
 $mb   = Get-CimInstance Win32_BaseBoard
@@ -580,6 +670,7 @@ $serialNumber = $bios.SerialNumber
 
 
 # Network Informations
+Write-Host "Collecting Network Informations..."
 $networkInfoHTML = ""
 
 Get-NetIPConfiguration | ForEach-Object {
@@ -633,8 +724,14 @@ $htmlContent += @"
         <tr><td>Cache Current Size</td><td>$sizeGB GB</td></tr>
         <tr><td>Folder Count in CCMCache</td><td>$folderCount</td></tr>
         <tr><td>Last Client Health Evaluation</td><td>$lastClientHealthRun</td></tr>
+        <tr><td>CCMEXEC Service State</td><td>$ccmexecText</td></tr>
         <tr><td>Operating System</td><td>$osName</td></tr>
+        <tr><td>Operating System DisplayName</td><td>$osDisplayname</td></tr>
         <tr><td>Operating System Version</td><td>$osVersion</td></tr>
+        <tr><td>Operating System DisplayVersion</td><td>$osDisplayVersion</td></tr>
+        <tr><td>Patch Level (UBR)</td><td>$patchLevelUBR</td></tr>
+        <tr><td>Operating System Install Date</td><td>$osInstallDate</td></tr>
+        <tr><td>Last Boot Time</td><td>$lastBootTime</td></tr>
 
       </table>
     </section>
@@ -701,6 +798,34 @@ $htmlContent += @"
        </p>
       </details>
 
+      <details>
+        <summary><b>GPRESULT</b></summary>
+        <p>
+      $gpresultHtml
+       </p>
+      </details>
+
+      <details>
+        <summary><b>Antivirus Product / Defender Settings</b></summary>
+        <p>
+      $resultsAV
+      </p>
+      </details>
+
+      <details>
+        <summary><b>License Informations</b></summary>
+        <p>
+      $licenseInfoHtml
+      </p>
+      </details>
+
+      <details>
+        <summary><b>Systeminfo</b></summary>
+        <p>
+      $systemInfoHtml
+      </p>
+      </details>
+
 
     </section>
 
@@ -754,6 +879,13 @@ $htmlContent += @"
         </p>
       </details>
 
+      <details>
+        <summary><b>Windows Update Sources</b></summary>
+        <p>
+            $resultUpdateSources
+        </p>
+      </details>
+
       <br>
       <br>
       <h2>DISM</h2>
@@ -772,7 +904,12 @@ $htmlContent += @"
       </p>
       </details>
 
-         
+      <details>
+        <summary><b>Installed Features</b></summary>
+        <p>
+        $installedFeaturesHtml
+      </p>
+      </details>
 
       
 
@@ -787,6 +924,9 @@ $htmlContent += @"
 "@
 
 # Stating the checks hier
+Write-Host ""
+Write-Host "### Starting the checking phase ###" -ForegroundColor Yellow
+Write-Host ""
 
 # Checking ccmsetup.log file
 $checksNumber += 1
@@ -880,6 +1020,16 @@ try {
 catch {
         Add-HtmlErrorFinding -Title "WSUS Server Check ($wsusWithoutPort) - Port $port Connection Check" -Recommendation "The client can not connect to the WSUS port. Test it with Test-NetConnection $wsusWithoutPort -Port $port <br> Check the client firewall settings and other clients in the same VLAN if they can connect to the WSUS."
   }
+
+# Checking if the WSUS is the default update source
+$checksNumber += 1
+$temp = New-Object -ComObject 'Microsoft.Update.ServiceManager' -ErrorAction Stop
+$defaultAUService = $temp.Services | Where-Object { $_.IsDefaultAUService -eq $true } | Select-Object Name -ExpandProperty Name
+if (($defaultAUService) -and ($defaultAUService -ne 'Windows Server Update Service')) {
+		Write-Host "WSUS is NOT the default update source!"
+        Add-HtmlErrorFinding -Title "Default Update Source Check" -Recommendation "The default update source: $defaultAUService <br>- Check the registry settings for WSUS <br>- Execute the gpupdate /force <br>- Trigger the actions in ConfigMgr"
+}
+else{Add-HtmlOkFinding -Title "Default Update Source Check"}
 
 
 # Checking the Count of the SDF Files (Local ConfigMgr Database Files)
@@ -1044,11 +1194,25 @@ if($certificatesForConfigMgr.Count -eq 2){
        if($cert.HasPrivateKey){
             Add-HtmlOkFinding -Title "$friendlyName Private Key Check" 
        }else{Add-HtmlErrorFinding -Title "$friendlyName Private Key Check" -Recommendation "The $friendlyName has no private key. Recommendation: Stop the SMS Agent Host service, open certlm.msc as administrator, delete the certificates in the SMS store and start the SMS Agent Host. <br> The Certificates will be regenerated."}
-    
+       
+       $checksNumber += 1
+       $subject = $cert.Subject
+
+       if ($subject -match 'CN=([^,]+)$') {
+            $lastCN = $matches[1]
+
+            if ($lastCN -ne $hostname) {
+                Add-HtmlErrorFinding -Title "$friendlyName CN Hostname Check" -Recommendation "The CN value doesn't match with the hostname in case of the $friendlyName certificate. Recommendation: Stop the SMS Agent Host service, open certlm.msc as administrator, delete the certificates in the SMS store and start the SMS Agent Host. <br> The Certificates will be regenerated."
+            }
+            else {
+                Add-HtmlOkFinding -Title "$friendlyName CN Hostname Check"
+            }
+        }
     }
 }else{
     Add-HtmlErrorFinding -Title "Certificate Count Check" -Recommendation "Missing certificates in the Cert:\LocalMachine\SMS store. The reinstallation of the ConfigMgr client is needed."
 }
+
 
 # BITS Check
 $checksNumber += 1
@@ -1404,7 +1568,7 @@ else {
 }
 
 
-# Checking Services
+# Checking relevant Services
 $checksNumber += 1
 $services = @("BITS", "winmgmt", "wuauserv", "lanmanserver", "RpcSs", "W32Time", "ccmexec", "CryptSvc")
 $notRunningServices = ""
@@ -1423,6 +1587,24 @@ if($notRunningServices -eq ""){
 }else{
     Add-HtmlErrorFinding -Title "Service State Check" -Recommendation "The following services are not running: $notRunningServices <br>Please check and start the affected services."
 }
+
+# Checking corrupted services (exit code is not 0 and not running however it should be)
+$checksNumber += 1
+$corruptedServices = Get-CimInstance Win32_Service |
+Where-Object {
+    $_.ExitCode -ne 0 -and
+    $_.StartMode -eq 'Auto' -and $_.State -ne 'Running'
+} 
+
+if($corruptedServices){
+    $corruptedServicesText = ""
+    foreach($service in $corruptedServices){
+        $corruptedServicesText += "$service.DisplayName | "
+    }
+    Add-HtmlErrorFinding -Title "Corrupted Service Check" -Recommendation "The following services couldn't be started and the exitcode was not 0: $corruptedServicesText <br>Try to start them manually."
+
+}
+else{Add-HtmlOkFinding -Title "Corrupted Service Check"}
 
 # Checking Admin Share and C: Share
 $checksNumber += 1
@@ -1520,6 +1702,9 @@ $htmlContent += @"
     <h2>Highlighted errors in the ConfigMgr logs</h2>
 "@
 
+Write-Host ""
+Write-Host "### Starting to analyze the log files phase ###" -ForegroundColor Yellow
+Write-Host ""
 
 $includedLogs = @(
     "ClientIDManagerStartup.log",
