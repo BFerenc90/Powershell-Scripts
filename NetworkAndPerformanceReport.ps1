@@ -279,34 +279,34 @@ $nicDrivers = Get-NetAdapter |
 
 $since = (Get-Date).AddDays(-7)
 
-$wiredAutoconfigLog = Get-WinEvent -FilterHashtable @{
+$wiredAutoconfigLog = Get-WinEvent -ErrorAction SilentlyContinue -FilterHashtable @{
     LogName   = "Microsoft-Windows-Wired-AutoConfig/Operational"
     StartTime = $since
 } | Sort-Object TimeCreated -Descending | Select-Object TimeCreated, LevelDisplayName, OpcodeDisplayName, Message | ConvertTo-Html -Fragment
 
 
-$nlaLog = Get-WinEvent -FilterHashtable @{
+$nlaLog = Get-WinEvent -ErrorAction SilentlyContinue -FilterHashtable @{
     LogName   = "Microsoft-Windows-NlaSvc/Operational"
     StartTime = $since
 } | Sort-Object TimeCreated -Descending | Select-Object TimeCreated, LevelDisplayName, OpcodeDisplayName, Message | ConvertTo-Html -Fragment
 
-$dhcpLogOp = Get-WinEvent -FilterHashtable @{
+$dhcpLogOp = Get-WinEvent -ErrorAction SilentlyContinue -FilterHashtable @{
     LogName   = "Microsoft-Windows-DHCP-Client/Operational"
     StartTime = $since
 } | Sort-Object TimeCreated -Descending | Select-Object TimeCreated, LevelDisplayName, OpcodeDisplayName, Message | ConvertTo-Html -Fragment
 
-$dnsLogOp = Get-WinEvent -FilterHashtable @{
+$dnsLogOp = Get-WinEvent -ErrorAction SilentlyContinue -FilterHashtable @{
     LogName   = "Microsoft-Windows-DNS-Client/Operational"
     StartTime = $since
 } | Sort-Object TimeCreated -Descending | Select-Object TimeCreated, LevelDisplayName, OpcodeDisplayName, Message | ConvertTo-Html -Fragment
 
-$dhcpLogAdm = Get-WinEvent -FilterHashtable @{
+$dhcpLogAdm = Get-WinEvent -ErrorAction SilentlyContinue -FilterHashtable @{
     LogName   = "Microsoft-Windows-DHCP-Client/Admin"
     StartTime = $since
 } | Sort-Object TimeCreated -Descending | Select-Object TimeCreated, LevelDisplayName, OpcodeDisplayName, Message | ConvertTo-Html -Fragment
 
 
-$systemEvents = Get-WinEvent -FilterHashtable @{
+$systemEvents = Get-WinEvent -ErrorAction SilentlyContinue -FilterHashtable @{
     LogName = 'System'
     StartTime = $since
 } | Where-Object {
