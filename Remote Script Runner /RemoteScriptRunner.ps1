@@ -10,7 +10,7 @@ Add-Type -AssemblyName WindowsBase
 # CONFIGURATION
 # -------------------------------------------------------
 $ScriptsFolder = "C:\Scripts"   # <-- change to your scripts folder
-$OutputFolder  = "C:\Output"    # <-- change to your output folder
+
 
 # -------------------------------------------------------
 # XAML UI DEFINITION
@@ -20,7 +20,7 @@ $OutputFolder  = "C:\Output"    # <-- change to your output folder
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     Title="Remote Script Runner"
-    Width="700" Height="660"
+    Width="700" Height="740"
     WindowStartupLocation="CenterScreen"
     ResizeMode="CanMinimize"
     Background="#0D0D0F"
@@ -266,19 +266,22 @@ $OutputFolder  = "C:\Output"    # <-- change to your output folder
 
         <Grid Margin="28,66,28,16">
             <Grid.RowDefinitions>
-                <RowDefinition Height="Auto"/>
-                <RowDefinition Height="Auto"/>
-                <RowDefinition Height="16"/>
-                <RowDefinition Height="Auto"/>
-                <RowDefinition Height="Auto"/>
-                <RowDefinition Height="16"/>
-                <RowDefinition Height="Auto"/>
-                <RowDefinition Height="20"/>
-                <RowDefinition Height="Auto"/>
-                <RowDefinition Height="16"/>
-                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>  <!-- 0: Script dropdown -->
+                <RowDefinition Height="Auto"/>  <!-- 1: Script info -->
+                <RowDefinition Height="16"/>    <!-- 2: Divider -->
+                <RowDefinition Height="Auto"/>  <!-- 3: Ad-hoc command -->
+                <RowDefinition Height="16"/>    <!-- 4: Divider -->
+                <RowDefinition Height="Auto"/>  <!-- 5: Hostname -->
+                <RowDefinition Height="Auto"/>  <!-- 6: Ping result -->
+                <RowDefinition Height="16"/>    <!-- 7: Divider -->
+                <RowDefinition Height="Auto"/>  <!-- 8: Credentials -->
+                <RowDefinition Height="16"/>    <!-- 9: Divider -->
+                <RowDefinition Height="Auto"/>  <!-- 10: Buttons -->
+                <RowDefinition Height="16"/>    <!-- 11: Spacer -->
+                <RowDefinition Height="*"/>     <!-- 12: Output -->
             </Grid.RowDefinitions>
 
+            <!-- SCRIPT DROPDOWN -->
             <StackPanel Grid.Row="0">
                 <TextBlock Text="SCRIPT" Foreground="#555565" FontSize="10" Margin="0,0,0,6"/>
                 <Grid>
@@ -296,6 +299,7 @@ $OutputFolder  = "C:\Output"    # <-- change to your output folder
                 </Grid>
             </StackPanel>
 
+            <!-- SCRIPT INFO -->
             <Border Grid.Row="1"
                     Background="#111116"
                     BorderBrush="#1E1E28"
@@ -313,7 +317,30 @@ $OutputFolder  = "C:\Output"    # <-- change to your output folder
 
             <Border Grid.Row="2" Height="1" Background="#1E1E28" VerticalAlignment="Center"/>
 
+            <!-- AD-HOC COMMAND -->
             <StackPanel Grid.Row="3">
+                <TextBlock Text="AD-HOC COMMAND  (This will be executed if the text box is not empty!)" Foreground="#555565" FontSize="10" Margin="0,0,0,6"/>
+                <TextBox x:Name="AdHocCommandBox"
+                         Background="#1A1A1E"
+                         Foreground="#E0E0E8"
+                         BorderBrush="#2E2E38"
+                         BorderThickness="1"
+                         CaretBrush="#3A7BD5"
+                         FontFamily="Consolas"
+                         FontSize="13"
+                         Padding="10,8"
+                         Height="90"
+                         AcceptsReturn="True"
+                         TextWrapping="Wrap"
+                         VerticalScrollBarVisibility="Auto"
+                         VerticalContentAlignment="Top"
+                         ToolTip="Pl.: Get-CimInstance Win32_Processor — Enter = új sor, Ctrl+Enter = futtatás"/>
+            </StackPanel>
+
+            <Border Grid.Row="4" Height="1" Background="#1E1E28" VerticalAlignment="Center"/>
+
+            <!-- HOSTNAME -->
+            <StackPanel Grid.Row="5">
                 <TextBlock Text="TARGET HOSTNAME / IP" Foreground="#555565" FontSize="10" Margin="0,0,0,6"/>
                 <Grid>
                     <Grid.ColumnDefinitions>
@@ -332,14 +359,15 @@ $OutputFolder  = "C:\Output"    # <-- change to your output folder
                 </Grid>
             </StackPanel>
 
-            <TextBlock x:Name="PingResult" Grid.Row="4"
+            <TextBlock x:Name="PingResult" Grid.Row="6"
                        Text="" FontSize="11"
                        Margin="2,4,0,0"
                        Foreground="#555565"/>
 
-            <Border Grid.Row="5" Height="1" Background="#1E1E28" VerticalAlignment="Center"/>
+            <Border Grid.Row="7" Height="1" Background="#1E1E28" VerticalAlignment="Center"/>
 
-            <StackPanel Grid.Row="6">
+            <!-- CREDENTIALS -->
+            <StackPanel Grid.Row="8">
                 <TextBlock Text="RUN AS" Foreground="#555565" FontSize="10" Margin="0,0,0,6"/>
                 <Grid>
                     <Grid.ColumnDefinitions>
@@ -365,9 +393,10 @@ $OutputFolder  = "C:\Output"    # <-- change to your output folder
                 </Grid>
             </StackPanel>
 
-            <Border Grid.Row="7" Height="1" Background="#1E1E28" VerticalAlignment="Center"/>
+            <Border Grid.Row="9" Height="1" Background="#1E1E28" VerticalAlignment="Center"/>
 
-            <Grid Grid.Row="8">
+            <!-- ACTION BUTTONS -->
+            <Grid Grid.Row="10">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="10"/>
@@ -395,7 +424,8 @@ $OutputFolder  = "C:\Output"    # <-- change to your output folder
                         FontSize="11"/>
             </Grid>
 
-            <Border Grid.Row="10"
+            <!-- OUTPUT BOX -->
+            <Border Grid.Row="12"
                     Background="#0A0A0C"
                     BorderBrush="#1E1E28"
                     BorderThickness="1"
@@ -447,6 +477,7 @@ try {
 
 # Get controls
 $ScriptComboBox         = $Window.FindName("ScriptComboBox")
+$AdHocCommandBox        = $Window.FindName("AdHocCommandBox")
 $HostnameTextBox        = $Window.FindName("HostnameTextBox")
 $UsernameBox            = $Window.FindName("UsernameBox")
 $PasswordBox            = $Window.FindName("PasswordBox")
@@ -574,27 +605,45 @@ $HostnameTextBox.Add_KeyDown({
     if ($_.Key -eq "Return") { $RunButton.RaiseEvent([System.Windows.RoutedEventArgs]::new([System.Windows.Controls.Button]::ClickEvent)) }
 })
 
+# By pressing Ctrl+Enter the script will be executed
+$AdHocCommandBox.Add_KeyDown({
+    if ($_.Key -eq "Return" -and [System.Windows.Input.Keyboard]::Modifiers -eq [System.Windows.Input.ModifierKeys]::Control) {
+        $RunButton.RaiseEvent([System.Windows.RoutedEventArgs]::new([System.Windows.Controls.Button]::ClickEvent))
+    }
+})
+
 $RunButton.Add_Click({
+    $adHocCmd       = $AdHocCommandBox.Text.Trim()
     $selectedScript = $ScriptComboBox.SelectedItem
     $hostname       = $HostnameTextBox.Text.Trim()
     $username       = $UsernameBox.Text.Trim()
     $password       = $PasswordBox.Password
 
 
-    if (-not $selectedScript -or $selectedScript -like "*Select a script*") {
-        [System.Windows.MessageBox]::Show("Please select a script from the dropdown.", "Missing Input", "OK", "Warning")
+    $runMode = ""
+    if ($adHocCmd -ne "") {
+        $runMode = "adhoc"
+    } elseif ($selectedScript -and $selectedScript -notlike "*Select a script*") {
+        $runMode    = "script"
+        $scriptPath = Join-Path $ScriptsFolder $selectedScript
+    } else {
+        [System.Windows.MessageBox]::Show("Please select a script from the list or use the ad-hoc command text box.", "Missing Input", "OK", "Warning")
         return
     }
+
     if (-not $hostname) {
         [System.Windows.MessageBox]::Show("Please enter a target hostname or IP address.", "Missing Input", "OK", "Warning")
         return
     }
 
-    $scriptPath = Join-Path $ScriptsFolder $selectedScript
-
     Set-Status "● RUNNING..." "#F0A030"
     $OutputTextBox.Text = ""
-    Write-Output-Box "> [$((Get-Date).ToString('HH:mm:ss'))] Starting: $selectedScript"
+
+    if ($runMode -eq "adhoc") {
+        Write-Output-Box "> [$((Get-Date).ToString('HH:mm:ss'))] Ad-hoc parancs: $adHocCmd"
+    } else {
+        Write-Output-Box "> [$((Get-Date).ToString('HH:mm:ss'))] Starting: $selectedScript"
+    }
     Write-Output-Box "> Target: $hostname"
     Write-Output-Box "> ─────────────────────────────────"
     $RunButton.IsEnabled = $false
@@ -605,7 +654,7 @@ $RunButton.Add_Click({
     $runBtn      = $RunButton
 
     $bgScript = {
-        param($sp, $hn, $un, $pw, $disp, $outBox, $statBadge, $btn)
+        param($mode, $sp, $adhoc, $hn, $un, $pw, $disp, $outBox, $statBadge, $btn)
 
         function Append-UI ($text, $hexColor) {
             $t = $text; $c = $hexColor
@@ -630,23 +679,22 @@ $RunButton.Add_Click({
                 $cred    = New-Object System.Management.Automation.PSCredential($un, $secPass)
             }
 
-
             $service = Get-WmiObject -Computer $hn -Credential $cred -Class Win32_Service -Filter "Name='winrm'"
             $originalStartType = $service.StartMode
-            $originalStatus = $service.State
-            #$service.ChangeStartMode("Automatic") | Out-Null
+            $originalStatus    = $service.State
             $service.StartService() | Out-Null
-            
-            
-            $scriptContent  = Get-Content -Path $sp -Raw -ErrorAction Stop
-            $wrappedContent = "function Write-Host { param([Parameter(ValueFromPipeline,Position=0)][object]`$Obj,[object]`$ForegroundColor,[object]`$BackgroundColor,[switch]`$NoNewline) process { Write-Output `$Obj } }`n" + $scriptContent
-            $scriptBlock    = [scriptblock]::Create($wrappedContent)
 
-            
+            if ($mode -eq "adhoc") {
+                $scriptBlock = [scriptblock]::Create($adhoc)
+            } else {
+                $scriptContent  = Get-Content -Path $sp -Raw -ErrorAction Stop
+                $wrappedContent = "function Write-Host { param([Parameter(ValueFromPipeline,Position=0)][object]`$Obj,[object]`$ForegroundColor,[object]`$BackgroundColor,[switch]`$NoNewline) process { Write-Output `$Obj } }`n" + $scriptContent
+                $scriptBlock    = [scriptblock]::Create($wrappedContent)
+            }
+
             $sessionOpts = @{ ComputerName = $hn; ErrorAction = "Stop" }
             if ($cred) { $sessionOpts.Credential = $cred }
             $session = New-PSSession @sessionOpts
-
 
             $hasOutput = $false
             Invoke-Command -Session $session -ScriptBlock $scriptBlock 2>&1 | ForEach-Object {
@@ -667,10 +715,9 @@ $RunButton.Add_Click({
                 }
             }
 
-            # Change WinRM to the original state
             $service.ChangeStartMode("$originalStartType") | Out-Null
-            if ($originalStatus -eq "Stopped"){
-			            $service.StopService() | Out-Null
+            if ($originalStatus -eq "Stopped") {
+                $service.StopService() | Out-Null
             }
 
             Remove-PSSession $session -ErrorAction SilentlyContinue
@@ -700,7 +747,9 @@ $RunButton.Add_Click({
 
     $ps = [PowerShell]::Create()
     [void]$ps.AddScript($bgScript)
+    [void]$ps.AddParameter("mode",      $runMode)
     [void]$ps.AddParameter("sp",        $scriptPath)
+    [void]$ps.AddParameter("adhoc",     $adHocCmd)
     [void]$ps.AddParameter("hn",        $hostname)
     [void]$ps.AddParameter("un",        $username)
     [void]$ps.AddParameter("pw",        $password)
