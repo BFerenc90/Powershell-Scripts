@@ -9,7 +9,7 @@ Add-Type -AssemblyName WindowsBase
 # -------------------------------------------------------
 # CONFIGURATION
 # -------------------------------------------------------
-$ScriptsFolder = "C:\Scripts"   # <-- change to your scripts folder
+$ScriptsFolder = Join-Path $PSScriptRoot "Scripts"
 
 
 # -------------------------------------------------------
