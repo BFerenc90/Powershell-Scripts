@@ -706,6 +706,8 @@ DISM /Online /Cleanup-Image /StartComponentCleanup
 
 # Execute SFC
 Write-Host "16. Running system file check..."
+Write-Host "If the sfc can not repair the corrupt files than the DISM has to be used to repair the image first!"
+Write-Host "If the DISM successfully repaired the image you have to execute the sfc /scannow command again."
 sfc /scannow
 
 # DISM commands
