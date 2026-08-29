@@ -548,20 +548,25 @@ Stop-Service -Name cryptsvc
 Write-Host "2. Remove QMGR Data file..." 
 Remove-Item "$env:allusersprofile\Application Data\Microsoft\Network\Downloader\qmgr*.dat" -ErrorAction SilentlyContinue 
 
-# Renaming the Windows Update és BITS related folders
-Write-Host "3. Renaming the Software Distribution and CatRoot Folder..."
+# Renaming the Windows Update and BITS related folders
+Write-Host "3. Renaming the Software Distribution and CatRoot Folders..."
 $dateToday = Get-Date -Format "yyyyMMdd_HHmmss"
-Rename-Item $env:systemroot\SoftwareDistribution "SoftwareDistribution_$dateToday" -ErrorAction SilentlyContinue
-Rename-Item $env:systemroot\System32\catroot2 "catroot2_$dateToday" -ErrorAction SilentlyContinue
-Rename-Item "C:\ProgramData\application data\Microsoft\Network\Downloader" "Downloader__$dateToday" -ErrorAction SilentlyContinue
-
-Write-Host "4. Removing old Windows Update log..." 
-Remove-Item $env:systemroot\WindowsUpdate.log -ErrorAction SilentlyContinue 
+Rename-Item $env:systemroot\SoftwareDistribution "SoftwareDistribution_$dateToday"
+Rename-Item $env:systemroot\System32\catroot2 "catroot2_$dateToday"
+Rename-Item "C:\ProgramData\application data\Microsoft\Network\Downloader" "Downloader__$dateToday"
 
 # It sets the default permissions for the Windows Update and BITS services (it is useful if there's any Access Denied issue during the update)
-Write-Host "5. Resetting the Windows Update Services to defualt settings..." 
+Write-Host "4. Resetting the Windows Update Services to defualt settings..." 
 sc.exe sdset bits "D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWLOCRRC;;;AU)(A;;CCLCSWRPWPDTLOCRRC;;;PU)" 
 sc.exe sdset wuauserv "D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWLOCRRC;;;AU)(A;;CCLCSWRPWPDTLOCRRC;;;PU)" 
+
+# Reset WSUS settings
+Write-Step '5. Removing WSUS client settings...'
+if (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate') {
+    foreach ($propertyName in @('AccountDomainSid', 'PingID', 'SusClientId')) {
+        Remove-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate' -Name $propertyName -Force -ErrorAction SilentlyContinue
+    }
+}
 
 # Reregister all the Windows Update related dll files
 Set-Location $env:systemroot\system32 
@@ -603,27 +608,23 @@ regsvr32.exe /s wucltux.dll
 regsvr32.exe /s muweb.dll 
 regsvr32.exe /s wuwebv.dll 
 
-# Reset the Windows Network API setting to the default. It can be useful if you don't even use proxy!
-Write-Host "7) Resetting the WinSock..." 
-netsh winsock reset 
-netsh winhttp reset proxy 
 
 # Deleting all BITS jobs which have errors during the download
-Write-Host "8) Delete all BITS jobs..." 
+Write-Host "7. Delete all BITS jobs..." 
 Import-Module Bitstransfer
 Get-BitsTransfer -AllUsers | Where-Object { $_.JobState -like 'TransientError' } | Remove-BitsTransfer
 Get-BitsTransfer -AllUsers | Where-Object { $_.JobState -like 'SUSPENDED' } | Resume-BitsTransfer
 
-Write-Host "9) Reset branchcache..." 
+Write-Host "8. Reset branchcache..." 
 netsh branchcache reset
 
 # The DO cache folder could be other location!
-Write-Host "10) Resetting Delivery Optimization..."
+Write-Host "9. Resetting Delivery Optimization..."
 Stop-Service DoSvc -Force -ErrorAction SilentlyContinue
 Remove-Item "C:\ProgramData\Microsoft\Windows\DeliveryOptimization\Cache\*" -Recurse -Force -ErrorAction SilentlyContinue
 Start-Service DoSvc -ErrorAction SilentlyContinue
 
-Write-Host "11) Starting Windows Update Services..." 
+Write-Host "10. Starting Windows Update Services..." 
 Start-Service -Name BITS 
 Start-Service -Name wuauserv 
 Start-Service -Name appidsvc 
@@ -633,17 +634,20 @@ Set-Service BITS -StartupType Automatic
 Set-Service wuauserv -StartupType Automatic
 Set-Service cryptsvc -StartupType Automatic
 
-Write-Host "10) Execute gpupdate /force..." 
+Write-Host "11. Deleting GPO files and executing gpupdate /force..."
+Remove-Item "$env:WinDir\System32\GroupPolicyUsers" -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item "$env:WinDir\System32\GroupPolicy" -Recurse -Force -ErrorAction SilentlyContinue
 gpupdate.exe /Force
 
 # Delete Windows Update client ID and reregister itself against the WSUS and report all installed and missing updates to the server
-Write-Host "12) Forcing discovery..."
+Write-Host "12. Forcing discovery..."
 wuauclt.exe /ResetAuthorization /DetectNow
 wuauclt.exe /reportnow
 UsoClient StartScan
 UsoClient StartDownload
 UsoClient StartInstall    
 
+Write-Host "13. Triggering actions in ConfigMgr..."
 # Triggering the following actions: Machine Policy Retrieval & Evaluation, Software Updates Scan, Software Updates Deployment Evaluation, Software Updates Assignment Evaluation
 ([wmiclass]'ROOT\ccm:SMS_Client').TriggerSchedule('{00000000-0000-0000-0000-000000000021}')
 ([wmiclass]'ROOT\ccm:SMS_Client').TriggerSchedule('{00000000-0000-0000-0000-000000000108}')
@@ -655,22 +659,23 @@ UsoClient StartInstall
 # Refresh the clients state, reevaluate the compliance
 (New-Object -ComObject Microsoft.CCM.UpdatesStore).RefreshServerComplianceState()
     
-Write-Host "13) Executing Built-in Windows Update Troubleshooter..."
-Get-TroubleshootingPack -Path "C:\Windows\diagnostics\system\WindowsUpdate" | Invoke-TroubleshootingPack -Unattended
+Write-Host "14. Executing Built-in Windows Update Troubleshooter..."
+Get-TroubleshootingPack -Path "C:\Windows\diagnostics\system\WindowsUpdate" | Invoke-TroubleshootingPack
 Restart-Service 'wuauserv'
 
-Write-Host "14) Generating Windows Update log..."
-Get-WindowsUpdateLog
-
 # Execute SFC and DISM commands
-Write-Host "15) Running system file check..."
+Write-Host "15. Running system file check..."
 sfc /scannow
-DISM /Online /Cleanup-Image /RestoreHealth
 
-Write-Host "16) Checking pending reboot..."
+# DISM commands
+Write-Host "16. Checking component store corruption..."
+DISM /Online /Cleanup-Image /CheckHealth
+DISM /Online /Cleanup-Image /ScanHealth
+
+# Pending reboot check
+Write-Host "17. Checking pending reboot..."
 if (Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending") {
     Write-Host "Reboot is pending!" -ForegroundColor Yellow
 }
 
 }
-
