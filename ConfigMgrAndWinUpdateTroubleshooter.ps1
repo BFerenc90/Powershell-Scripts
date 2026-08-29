@@ -701,12 +701,15 @@ Write-Host "14. Executing Built-in Windows Update Troubleshooter..."
 Get-TroubleshootingPack -Path "C:\Windows\diagnostics\system\WindowsUpdate" | Invoke-TroubleshootingPack
 Restart-Service 'wuauserv'
 
-# Execute SFC and DISM commands
-Write-Host "15. Running system file check..."
+Write-Host "15. Cleaning the component database (CBS)..."
+DISM /Online /Cleanup-Image /StartComponentCleanup
+
+# Execute SFC
+Write-Host "16. Running system file check..."
 sfc /scannow
 
 # DISM commands
-Write-Host "16. Checking component store corruption..."
+Write-Host "17. Checking component store corruption..."
 DISM /Online /Cleanup-Image /CheckHealth
 DISM /Online /Cleanup-Image /ScanHealth
 
