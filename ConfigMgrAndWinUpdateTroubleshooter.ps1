@@ -537,6 +537,34 @@ else{Write-Host 'Domain Admins is not member of the local admins group' -Foregro
 $input = Read-Host "Do you want to execute extended Windows Update troubleshooting? (yes or no)"
 if($input -eq "yes" -or $input -eq "y"){
 
+
+
+# Pending Restart Check
+Write-Host "Checking for pending restarts..."
+
+$pendingXml = "$env:windir\WinSxS\pending.xml"
+$poqexecKey = "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager"
+
+if (Test-Path $pendingXml) {
+    Write-Host "WARNING: pending.xml exists at $pendingXml - an interrupted servicing operation may be blocking new updates." -ForegroundColor Red
+    Write-Host "After the reboot please execute the script again." -ForegroundColor Red
+    exit 0
+}
+
+$pfro = Get-ItemProperty -Path $poqexecKey -Name "PendingFileRenameOperations" -ErrorAction SilentlyContinue
+if ($pfro -and $pfro.PendingFileRenameOperations) {
+    Write-Host "WARNING: PendingFileRenameOperations is set - a reboot is likely required to complete pending operations." -ForegroundColor Red
+    Write-Host "After the reboot please execute the script again." -ForegroundColor Red
+    exit 0
+} 
+
+$rebootPendingPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending"
+if (Test-Path $rebootPendingPath) {
+    Write-Host "WARNING: CBS RebootPending key exists - a reboot is required before further servicing will succeed." -ForegroundColor Yellow
+    Write-Host "After the reboot please execute the script again." -ForegroundColor Red
+    exit 0
+} 
+
 # Windows Update related services
 Write-Host "1. Stopping Windows Update Services..." 
 Stop-Service -Name BITS 
@@ -561,7 +589,7 @@ sc.exe sdset bits "D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;
 sc.exe sdset wuauserv "D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWLOCRRC;;;AU)(A;;CCLCSWRPWPDTLOCRRC;;;PU)" 
 
 # Reset WSUS settings
-Write-Step '5. Removing WSUS client settings...'
+Write-Host '5. Removing WSUS client settings...'
 if (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate') {
     foreach ($propertyName in @('AccountDomainSid', 'PingID', 'SusClientId')) {
         Remove-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate' -Name $propertyName -Force -ErrorAction SilentlyContinue
@@ -634,6 +662,16 @@ Set-Service BITS -StartupType Automatic
 Set-Service wuauserv -StartupType Automatic
 Set-Service cryptsvc -StartupType Automatic
 
+$ti = Get-Service -Name TrustedInstaller -ErrorAction SilentlyContinue
+if ($null -eq $ti) {
+    Write-Host "TrustedInstaller service not found!" -ForegroundColor Red
+} else {
+    Write-Host "Status: $($ti.Status) | StartType: $($ti.StartType)"
+    if ($ti.StartType -eq 'Disabled') {
+        Set-Service -Name TrustedInstaller -StartupType Manual
+    }
+}
+
 Write-Host "11. Deleting GPO files and executing gpupdate /force..."
 Remove-Item "$env:WinDir\System32\GroupPolicyUsers" -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item "$env:WinDir\System32\GroupPolicy" -Recurse -Force -ErrorAction SilentlyContinue
@@ -672,10 +710,6 @@ Write-Host "16. Checking component store corruption..."
 DISM /Online /Cleanup-Image /CheckHealth
 DISM /Online /Cleanup-Image /ScanHealth
 
-# Pending reboot check
-Write-Host "17. Checking pending reboot..."
-if (Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending") {
-    Write-Host "Reboot is pending!" -ForegroundColor Yellow
-}
+
 
 }
